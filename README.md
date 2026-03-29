@@ -16,7 +16,7 @@ Five skills that chain into one automated pipeline:
 
 ## Prerequisites
 
-- macOS (tested on macOS 14+)
+- bash (tested on macOS 14+)
 - Python 3.9+
 - Claude Code CLI (or any coding agent that runs Python and bash)
 
@@ -39,6 +39,7 @@ cd your-project
 ```
 
 One command. The orchestrator drives all 4 eyes autonomously:
+
 ```
 rinnegan (detect) -> byakugan (analyze) -> [rasengan phase N -> sharingan phase N] x phases -> COMPLETE
 ```

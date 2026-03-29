@@ -32,7 +32,7 @@ mkdir -p "$CACHE_DIR"
 ## Gate 0: Deterministic Build (bash — unfakeable)
 
 ```bash
-~/.config/spsm/sharingan/verify-deterministic.sh "$SHARINGAN_BASE"
+$SKILL_DIR/gates/verify-deterministic.sh "$SHARINGAN_BASE"
 ```
 
 This auto-detects your project type (TypeScript, Java/Kotlin/Gradle, Python, Rust, Go, Smithy, Shell, Docker) and runs the appropriate checks:
@@ -62,8 +62,11 @@ The LLM cannot fake this gate — it runs real commands with real exit codes.
 - After verifying a requirement, update the checklist: set `verified_by_sharingan: true` for that requirement
 - Use `spsm_checklist_flip` only for the `implemented` field; for `verified_by_sharingan`, use direct jq update:
   ```bash
-  source ~/.config/spsm/hooks/spsm-hmac-utils.sh
-  CHECKLIST_FILE=$(spsm_checklist_file)
+  # Only when running inside spsm-pipeline (skip if standalone/dojutsu)
+  if [[ -f "${HOME}/.config/spsm/hooks/spsm-hmac-utils.sh" ]]; then
+    source "${HOME}/.config/spsm/hooks/spsm-hmac-utils.sh"
+  fi
+  CHECKLIST_FILE=$(spsm_checklist_file 2>/dev/null || echo "")
   jq --arg id "REQ-001" '.requirements |= map(if .id == $id then .verified_by_sharingan = true else . end)' "$CHECKLIST_FILE" > "${CHECKLIST_FILE}.tmp" && mv "${CHECKLIST_FILE}.tmp" "$CHECKLIST_FILE"
   ```
   Note: This modifies the file without re-signing HMAC. The verify function checks HMAC of the content without the hmac field, so this change will invalidate the HMAC. After all verifications, re-sign:
@@ -201,7 +204,7 @@ This is the most critical gate. A SEPARATE agent with ZERO builder context verif
 # Engine and model are read from SSOT (agent-capabilities.yaml) by the script.
 # Override via env: SHARINGAN_VERIFIER_ENGINE, SHARINGAN_VERIFIER_MODEL
 # Or via CLI: --engine <codex|claude> --model <model-id>
-~/.config/spsm/sharingan/verify-independent.sh \
+$SKILL_DIR/gates/verify-independent.sh \
   --plan "[path-to-plan-file]" \
   --base "$SHARINGAN_BASE"
 ```
@@ -231,7 +234,7 @@ The only unfakeable SEMANTIC check. Everything before Gate 4 checks code EXISTS 
 ### Step 1: Generate runtime check template
 
 ```bash
-~/.config/spsm/sharingan/verify-runtime.sh \
+$SKILL_DIR/gates/verify-runtime.sh \
   --base "$SHARINGAN_BASE" \
   --port "${PORT:-auto}"
 ```
@@ -283,7 +286,7 @@ FAIL -> auto-fix -> re-run. Max 2 cycles. Still failing -> BLOCKED.
 ## Gate 5: Reconciliation (deterministic — NO LLM judgment)
 
 ```bash
-~/.config/spsm/sharingan/reconcile.sh "$SHARINGAN_BASE"
+$SKILL_DIR/gates/reconcile.sh "$SHARINGAN_BASE"
 ```
 
 This script:
@@ -341,7 +344,7 @@ This script:
 
 ## Stop Hook
 
-`~/.config/spsm/sharingan/enforce.sh` runs deterministic checks on every conversation end:
+`$SKILL_DIR/gates/enforce.sh` runs deterministic checks on every conversation end:
 
 **LIGHTWEIGHT mode** (analysis/audit/question sessions — COMMIT_BEFORE not set):
 1. Does type-check/compile pass? (auto-detected per project type) (Fail -> BLOCK)

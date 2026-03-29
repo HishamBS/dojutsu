@@ -18,7 +18,7 @@ from typing import Optional
 STATE_FILE = "docs/audit/data/dojutsu-state.json"
 PROGRESS_FILE = "docs/audit/data/dojutsu-progress.jsonl"
 SENTINEL_FILE = "docs/audit/data/.dojutsu-active"
-HMAC_KEY_FILE = os.path.expanduser("~/.config/spsm/.hmac-key")
+HMAC_KEY_FILE = "docs/audit/data/.dojutsu-hmac-key"  # Per-project, resolved relative to project_dir
 
 SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "REVIEW": 4}
 
@@ -34,9 +34,9 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _get_hmac_key() -> bytes:
-    """Read or create HMAC key."""
-    key_path = Path(HMAC_KEY_FILE)
+def _get_hmac_key(project_dir: str) -> bytes:
+    """Read or create per-project HMAC key."""
+    key_path = Path(os.path.join(project_dir, HMAC_KEY_FILE))
     if key_path.exists():
         return key_path.read_bytes().strip()
     key_path.parent.mkdir(parents=True, exist_ok=True)
@@ -46,9 +46,13 @@ def _get_hmac_key() -> bytes:
     return key
 
 
+# Module-level cache for project_dir used by HMAC functions
+_current_project_dir: str = ""
+
+
 def _compute_hmac(state: dict) -> str:
     """Compute HMAC-SHA256 over stage + last_updated."""
-    key = _get_hmac_key()
+    key = _get_hmac_key(_current_project_dir)
     payload = f"{state['stage']}|{state['last_updated']}".encode()
     return hmac.new(key, payload, hashlib.sha256).hexdigest()
 
@@ -86,6 +90,8 @@ def default_state() -> dict:
 
 def load_state(project_dir: str) -> dict:
     """Load and HMAC-verify state from disk. Returns default if no state file."""
+    global _current_project_dir
+    _current_project_dir = project_dir
     path = os.path.join(project_dir, STATE_FILE)
     if not os.path.exists(path):
         return default_state()
@@ -275,20 +281,47 @@ def get_head_sha(project_dir: str) -> str:
 
 # --- Eye Script Resolution ---
 
+def _get_skills_search_paths() -> list[str]:
+    """Return list of directories to search for sibling skills, in priority order."""
+    paths = []
+    # 1. Resolve from THIS skill's location (sibling directories)
+    this_skill = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    parent = os.path.dirname(this_skill)
+    if os.path.isdir(parent):
+        paths.append(parent)
+    # 2. Common agent skill locations (auto-detected, not hardcoded)
+    for agent_dir in [
+        os.path.expanduser("~/.coding-agent/skills"),
+        os.path.expanduser("~/.claude/commands"),
+        os.path.expanduser("~/.codex/skills"),
+        os.path.expanduser("~/.config/opencode/command"),
+        os.path.expanduser("~/.gemini/skills"),
+    ]:
+        if os.path.isdir(agent_dir) and agent_dir not in paths:
+            paths.append(agent_dir)
+    return paths
+
+
+def resolve_skill_dir(skill: str) -> str:
+    """Find a sibling skill's directory."""
+    for base in _get_skills_search_paths():
+        skill_dir = os.path.join(base, skill)
+        if os.path.isdir(skill_dir):
+            return os.path.realpath(skill_dir)
+    raise FileNotFoundError(
+        f"Cannot find skill '{skill}'. Run setup.sh to install dojutsu skills."
+    )
+
+
 def resolve_eye_script(eye: str) -> str:
     """Find a sibling eye's run-pipeline.py."""
-    # Try symlinked skills location first
-    skills_dir = os.path.expanduser("~/.coding-agent/skills")
-    script = os.path.join(skills_dir, eye, "scripts", "run-pipeline.py")
+    skill_dir = resolve_skill_dir(eye)
+    script = os.path.join(skill_dir, "scripts", "run-pipeline.py")
     if os.path.exists(script):
         return script
-    # Try dotfiles source
-    dotfiles = os.path.expanduser(
-        f"~/dotfiles/spsm/.config/spsm/skills/{eye}/scripts/run-pipeline.py"
+    raise FileNotFoundError(
+        f"Cannot find run-pipeline.py for {eye} in {skill_dir}/scripts/"
     )
-    if os.path.exists(dotfiles):
-        return dotfiles
-    raise FileNotFoundError(f"Cannot find run-pipeline.py for {eye}")
 
 
 def is_eye_complete(stdout: str, eye: str) -> bool:

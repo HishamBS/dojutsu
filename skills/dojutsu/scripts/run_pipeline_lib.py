@@ -21,6 +21,7 @@ from dojutsu_state import (
     load_state,
     read_progress,
     resolve_eye_script,
+    resolve_skill_dir,
     save_state,
     tag_git_checkpoint,
     transition,
@@ -88,7 +89,7 @@ def _delegate_to_eye(eye: str, project_dir: str, state: dict) -> int:
         eye_script = resolve_eye_script(eye)
     except FileNotFoundError as e:
         print(f"ERROR: {e}")
-        print(f"Ensure the {eye} skill is installed at ~/.coding-agent/skills/{eye}/")
+        print(f"Ensure the {eye} skill is installed. Run setup.sh to install all skills.")
         return 1
 
     result = subprocess.run(
@@ -158,7 +159,12 @@ def _emit_sharingan_action(
 
     base_key = f"phase-{phase_num}-start"
     base_commit = state["git_checkpoints"].get(base_key, "HEAD~1")
-    sharingan_dir = os.path.expanduser("~/.config/spsm/sharingan")
+    try:
+        sharingan_skill = resolve_skill_dir("sharingan")
+    except FileNotFoundError:
+        print("ERROR: sharingan skill not found. Run setup.sh to install.")
+        return 1
+    sharingan_dir = os.path.join(sharingan_skill, "gates")
 
     print(f"STAGE: SHARINGAN_PHASE_{phase_num}")
     print(f"SKILL_DIR: {os.path.dirname(os.path.dirname(os.path.abspath(__file__)))}")

@@ -1,0 +1,9 @@
+# Default agent capabilities for dojutsu pipeline
+# Override by placing your own at ~/.config/spsm/policy/agent-capabilities.yaml
+agents:
+  SharinganVerifier:
+    engine: codex
+    model: ""
+  default:
+    max_parallel: 5
+    timeout_seconds: 300

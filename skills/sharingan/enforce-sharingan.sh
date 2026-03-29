@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sharingan enforcement hook — delegates to agent-agnostic enforce.sh
-# This thin wrapper ensures the Claude Code stop hook calls the shared enforcement script.
-
-exec ~/.config/spsm/sharingan/enforce.sh "$@"
+# Sharingan enforcement hook — delegates to gates/enforce.sh
+# Resolves path relative to this script, not hardcoded.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$SCRIPT_DIR/gates/enforce.sh" "$@"
