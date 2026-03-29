@@ -28,7 +28,7 @@ echo "Python $PY_VERSION detected"
 # 2. Install skills
 mkdir -p "$SKILLS_DIR"
 
-for skill in rinnegan rasengan sharingan; do
+for skill in rinnegan rasengan sharingan byakugan dojutsu; do
     target="$SKILLS_DIR/$skill"
     if [ -L "$target" ]; then
         rm "$target"
@@ -79,8 +79,10 @@ echo ""
 echo "=== Installation Complete ==="
 echo ""
 echo "Available commands:"
+echo "  /dojutsu    - Full automated pipeline (recommended — runs all 4 eyes)"
 echo "  /rinnegan   - Audit a codebase for engineering rule violations"
+echo "  /byakugan   - Deep analysis: dependency tracing, blast radius, scorecards"
 echo "  /rasengan   - Autonomously fix audit findings phase by phase"
 echo "  /sharingan  - Evidence-based QA pipeline (5 verification gates)"
 echo ""
-echo "Run /rinnegan in any project to start your first audit."
+echo "Run /dojutsu in any project for the full pipeline."
