@@ -240,6 +240,19 @@ def run_pipeline(project_dir: str) -> int:
     """Main entry point. Check state, delegate, or emit action."""
     project_dir = os.path.abspath(project_dir)
 
+    # Pre-flight: verify all 5 skills are resolvable
+    missing_skills = []
+    for skill in ("rinnegan", "byakugan", "rasengan", "sharingan"):
+        try:
+            resolve_skill_dir(skill)
+        except FileNotFoundError:
+            missing_skills.append(skill)
+    if missing_skills:
+        print("ERROR: Missing skills: " + ", ".join(missing_skills))
+        print("  Run setup.sh to install all dojutsu skills.")
+        print("  Or ensure all 5 skills are in the same agent's skill directory.")
+        return 1
+
     # Load or create state
     state = load_state(project_dir)
     ensure_sentinel(project_dir)

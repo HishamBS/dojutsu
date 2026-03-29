@@ -124,7 +124,8 @@ def run_pipeline(project_dir: str) -> int:
 
     if state == "NEEDS_RINNEGAN":
         print("\nACTION: Run rinnegan first to produce findings.")
-        print(f"  Run: python3 ~/.coding-agent/skills/rinnegan/scripts/run-pipeline.py {project_dir}")
+        print(f"  Run: python3 $SKILL_DIR/../rinnegan/scripts/run-pipeline.py {project_dir}")
+        print("  (Or invoke /rinnegan if running inside a coding agent.)")
         print("  Repeat until PIPELINE_COMPLETE, then run this script again.")
         return 0
 

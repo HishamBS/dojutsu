@@ -159,6 +159,129 @@ PYTHON_PATTERNS: list[PatternDef] = [
      "explanation": "Hardcoded localhost URLs will fail in deployed environments. Use environment variables."},
 ]
 
+JAVA_PATTERNS: list[PatternDef] = [
+    {"pattern": r"System\.out\.println\(", "rule": "R14", "severity": "MEDIUM", "category": "clean-code",
+     "description": "System.out.println in production code", "phase": 5, "removable": True,
+     "explanation": "System.out.println writes directly to stdout and cannot be filtered, routed, or disabled in production. Use a logging framework (SLF4J, Log4j2) with appropriate log levels so output can be configured per environment."},
+    {"pattern": r"System\.err\.println\(", "rule": "R14", "severity": "MEDIUM", "category": "clean-code",
+     "description": "System.err.println in production code", "phase": 5, "removable": True,
+     "explanation": "System.err.println writes directly to stderr without structured formatting or log levels. Replace with a logging framework that supports error-level logging with stack traces and contextual metadata."},
+    {"pattern": r"catch\s*\([^)]*\)\s*\{\s*\}", "rule": "R14", "severity": "HIGH", "category": "build",
+     "description": "Empty catch block silently swallows exceptions", "phase": 0,
+     "explanation": "Empty catch blocks hide errors completely, making bugs invisible. Exceptions that should crash the program or trigger alerts are silently ignored. At minimum, log the exception; ideally, handle or rethrow it."},
+    {"pattern": r"@SuppressWarnings", "rule": "R14", "severity": "MEDIUM", "category": "build",
+     "description": "@SuppressWarnings annotation hides compiler warnings", "phase": 0,
+     "explanation": "SuppressWarnings disables compiler checks that exist to catch bugs. Each suppression should have a justification comment. Blanket suppressions (e.g., \"unchecked\", \"rawtypes\") indicate code that should be fixed, not silenced."},
+    {"pattern": r"throws\s+Exception\b", "rule": "R14", "severity": "MEDIUM", "category": "build",
+     "description": "throws Exception is too broad", "phase": 2,
+     "explanation": "Declaring 'throws Exception' forces callers to catch the broadest possible exception type, preventing specific error handling. Declare specific checked exceptions (IOException, SQLException) so callers can handle each failure mode appropriately."},
+    {"pattern": r"instanceof\s+\w+.*instanceof\s+\w+.*instanceof\s+\w+", "rule": "R01", "severity": "MEDIUM", "category": "ssot-dry",
+     "description": "instanceof chain suggests missing polymorphism", "phase": 3,
+     "explanation": "Multiple instanceof checks in sequence indicate type-switching logic that should be replaced with polymorphism. Each new subtype requires modifying the chain, violating the open-closed principle. Use method overriding or the visitor pattern."},
+    {"pattern": r"new\s+ArrayList<>\(\)", "rule": "R04", "severity": "LOW", "category": "performance",
+     "description": "new ArrayList<>() where List.of() may suffice for immutable lists", "phase": 5,
+     "explanation": "If the list is never modified after creation, use List.of() or Collections.unmodifiableList() instead. Immutable collections are safer in concurrent code, communicate intent clearly, and avoid accidental modification bugs."},
+    {"pattern": r"\bList\b[^<]", "rule": "R07", "severity": "MEDIUM", "category": "typing",
+     "description": "Raw type without generics bypasses compile-time type safety", "phase": 2,
+     "explanation": "Raw types (List instead of List<String>) disable generic type checking. The compiler cannot verify element types, and ClassCastExceptions will occur at runtime instead of being caught at compile time. Always specify the type parameter."},
+    {"pattern": r"\bpublic\s+(?:int|long|String|boolean|double|float)\s+\w+\s*;", "rule": "R02", "severity": "MEDIUM", "category": "architecture",
+     "description": "Public field should be private with accessor methods", "phase": 3,
+     "explanation": "Public fields expose internal state and prevent adding validation, lazy initialization, or change notification later without breaking all callers. Use private fields with getter/setter methods to maintain encapsulation."},
+    {"pattern": r"\bTODO\b", "rule": "R14", "severity": "LOW", "category": "build",
+     "description": "TODO marker in production code", "phase": 0,
+     "explanation": "TODO comments indicate incomplete implementation that should be tracked as tickets and completed before release."},
+    {"pattern": r"\bFIXME\b", "rule": "R14", "severity": "MEDIUM", "category": "build",
+     "description": "FIXME marker indicates known bug", "phase": 0,
+     "explanation": "FIXME marks known bugs that should be fixed before release or tracked as high-priority tickets."},
+    {"pattern": r"\bHACK\b", "rule": "R14", "severity": "MEDIUM", "category": "build",
+     "description": "HACK marker indicates technical debt", "phase": 0,
+     "explanation": "HACK comments mark intentional shortcuts that should be properly implemented to avoid long-term maintenance issues."},
+    {"pattern": r"https?://[^\s\"']+:\d{2,5}", "rule": "R13", "severity": "HIGH", "category": "clean-code",
+     "description": "Hardcoded URL with port number", "phase": 7,
+     "explanation": "Hardcoded URLs with ports will fail when services move or ports change across environments. Use configuration properties or environment variables for all service endpoints."},
+    {"pattern": r"==\s*null\b", "rule": "R07", "severity": "LOW", "category": "typing",
+     "description": "== null check instead of Objects.isNull or Optional", "phase": 5,
+     "explanation": "Direct null comparisons are error-prone and verbose. Use Objects.isNull() for predicate references or Optional<T> to represent nullable values explicitly, making null-safety part of the type system."},
+]
+
+GO_PATTERNS: list[PatternDef] = [
+    {"pattern": r"fmt\.Println\(", "rule": "R14", "severity": "MEDIUM", "category": "clean-code",
+     "description": "fmt.Println in production code", "phase": 5, "removable": True,
+     "explanation": "fmt.Println writes to stdout without structure or log levels. Use a structured logging library (zerolog, zap, slog) that supports JSON output, log levels, and contextual fields for production observability."},
+    {"pattern": r"fmt\.Printf\(", "rule": "R14", "severity": "MEDIUM", "category": "clean-code",
+     "description": "fmt.Printf in production code", "phase": 5, "removable": True,
+     "explanation": "fmt.Printf writes formatted output to stdout without log levels or structure. Replace with a structured logger that can be filtered and routed in production environments."},
+    {"pattern": r"if\s+err\s*!=\s*nil\s*\{\s*\}", "rule": "R14", "severity": "HIGH", "category": "build",
+     "description": "Empty error check silently swallows errors", "phase": 0,
+     "explanation": "Checking err != nil but doing nothing in the block silently ignores errors. This hides bugs and makes failures invisible. At minimum return the error; ideally, wrap it with context using fmt.Errorf or errors.Wrap."},
+    {"pattern": r"\binterface\{\}", "rule": "R07", "severity": "MEDIUM", "category": "typing",
+     "description": "interface{} should be 'any' in Go 1.18+", "phase": 2,
+     "explanation": "Since Go 1.18, the 'any' type alias replaces interface{} for readability. Using interface{} in new code is outdated. Replace with 'any' for clarity, and consider whether a more specific type or generic constraint would be better."},
+    {"pattern": r"\bpanic\(", "rule": "R14", "severity": "HIGH", "category": "build",
+     "description": "panic() crashes the entire program", "phase": 1,
+     "explanation": "panic() terminates the goroutine and unwinds the stack, potentially crashing the entire program. Outside of init() or truly unrecoverable situations, return errors instead so callers can handle failures gracefully."},
+    {"pattern": r"\bTODO\b", "rule": "R14", "severity": "LOW", "category": "build",
+     "description": "TODO marker in production code", "phase": 0,
+     "explanation": "TODO comments indicate incomplete implementation that should be tracked as tickets and completed before release."},
+    {"pattern": r"\bFIXME\b", "rule": "R14", "severity": "MEDIUM", "category": "build",
+     "description": "FIXME marker indicates known bug", "phase": 0,
+     "explanation": "FIXME marks known bugs that should be fixed before release or tracked as high-priority tickets."},
+    {"pattern": r"\bHACK\b", "rule": "R14", "severity": "MEDIUM", "category": "build",
+     "description": "HACK marker indicates technical debt", "phase": 0,
+     "explanation": "HACK comments mark intentional shortcuts that should be properly implemented to avoid long-term maintenance issues."},
+    {"pattern": r"https?://[^\s\"'`]+:\d{2,5}", "rule": "R13", "severity": "HIGH", "category": "clean-code",
+     "description": "Hardcoded URL with port number", "phase": 7,
+     "explanation": "Hardcoded URLs with ports break across environments. Use configuration or environment variables for all service endpoints."},
+    {"pattern": r"_\s*=\s*err\b", "rule": "R14", "severity": "HIGH", "category": "build",
+     "description": "Silenced error with _ = err", "phase": 0,
+     "explanation": "Assigning an error to the blank identifier explicitly discards it. This hides failures that could cause data corruption or silent misbehavior. Handle the error, return it, or log it with context."},
+    {"pattern": r"\blog\.Fatal", "rule": "R14", "severity": "MEDIUM", "category": "build",
+     "description": "log.Fatal in library code calls os.Exit(1)", "phase": 1,
+     "explanation": "log.Fatal calls os.Exit(1) immediately, bypassing deferred functions and preventing graceful shutdown. In library code this is especially dangerous as it removes control from the caller. Return errors instead and let main() decide exit behavior."},
+    {"pattern": r"\b\d{3,}\b", "rule": "R13", "severity": "LOW", "category": "clean-code",
+     "description": "Magic number in code", "phase": 5,
+     "explanation": "Hardcoded numeric literals make code harder to understand and maintain. Extract magic numbers into named constants that convey intent and can be updated in one place."},
+]
+
+RUST_PATTERNS: list[PatternDef] = [
+    {"pattern": r"\.unwrap\(\)", "rule": "R14", "severity": "HIGH", "category": "build",
+     "description": "unwrap() panics on None/Err in production code", "phase": 1,
+     "explanation": "unwrap() causes a panic if the value is None or Err, crashing the thread. In library code this is especially dangerous. Use pattern matching, unwrap_or, unwrap_or_else, or the ? operator for proper error propagation."},
+    {"pattern": r"\.expect\(", "rule": "R14", "severity": "MEDIUM", "category": "build",
+     "description": "expect() panics with a message on None/Err", "phase": 1,
+     "explanation": "expect() is marginally better than unwrap() as it provides a message, but still panics. In library and application code, prefer the ? operator or match/if-let for recoverable error handling."},
+    {"pattern": r"\bunsafe\b", "rule": "R05", "severity": "HIGH", "category": "security",
+     "description": "unsafe block bypasses Rust's safety guarantees", "phase": 1,
+     "explanation": "unsafe blocks disable borrow checking, allowing memory corruption, use-after-free, and data races. Each unsafe block must have a SAFETY comment explaining why the invariants are upheld. Minimize unsafe surface area."},
+    {"pattern": r"\bprintln!\(", "rule": "R14", "severity": "MEDIUM", "category": "clean-code",
+     "description": "println! in production code", "phase": 5, "removable": True,
+     "explanation": "println! writes to stdout without log levels or structure. Use a logging crate (tracing, log, env_logger) that supports structured output, log levels, and can be configured per environment."},
+    {"pattern": r"\beprintln!\(", "rule": "R14", "severity": "MEDIUM", "category": "clean-code",
+     "description": "eprintln! in production code", "phase": 5, "removable": True,
+     "explanation": "eprintln! writes to stderr without structure or log levels. Replace with a logging crate that supports error-level logging with structured context."},
+    {"pattern": r"\bTODO\b", "rule": "R14", "severity": "LOW", "category": "build",
+     "description": "TODO marker in production code", "phase": 0,
+     "explanation": "TODO comments indicate incomplete implementation that should be tracked as tickets and completed before release."},
+    {"pattern": r"\bFIXME\b", "rule": "R14", "severity": "MEDIUM", "category": "build",
+     "description": "FIXME marker indicates known bug", "phase": 0,
+     "explanation": "FIXME marks known bugs that should be fixed before release or tracked as high-priority tickets."},
+    {"pattern": r"\bHACK\b", "rule": "R14", "severity": "MEDIUM", "category": "build",
+     "description": "HACK marker indicates technical debt", "phase": 0,
+     "explanation": "HACK comments mark intentional shortcuts that should be properly implemented to avoid long-term maintenance issues."},
+    {"pattern": r"\bpub\s+\w+\s*:", "rule": "R02", "severity": "LOW", "category": "architecture",
+     "description": "pub struct field may expose internal state", "phase": 3,
+     "explanation": "Public struct fields expose implementation details and prevent adding validation or computed values later. Consider using private fields with accessor methods, or builder patterns for construction."},
+    {"pattern": r"\.clone\(\)", "rule": "R04", "severity": "LOW", "category": "performance",
+     "description": "clone() where borrowing may suffice", "phase": 5,
+     "explanation": "Cloning allocates new memory and copies data. If the value is only read, borrow it instead (&T or &mut T). Unnecessary clones hurt performance and obscure ownership semantics."},
+    {"pattern": r"#\[allow\(", "rule": "R14", "severity": "MEDIUM", "category": "build",
+     "description": "#[allow(...)] suppresses compiler lint warnings", "phase": 0,
+     "explanation": "Lint suppressions hide potential issues the compiler would otherwise catch. Each #[allow] should have a justification comment. Fix the underlying issue instead of silencing the warning."},
+    {"pattern": r"\bas\s+[a-z]", "rule": "R07", "severity": "MEDIUM", "category": "typing",
+     "description": "'as' type cast may silently truncate or wrap values", "phase": 2,
+     "explanation": "Rust's 'as' casts can silently truncate integers, lose precision on floats, or wrap around. Use TryFrom/TryInto for fallible conversions, or From/Into for infallible ones, to get compile-time or runtime safety."},
+]
+
 # ---- Skip / filter lists -----------------------------------------------------
 
 SKIP_SUBSTRINGS = ("node_modules", ".next", "__tests__", ".test.", ".spec.", "test/")
@@ -174,6 +297,12 @@ def get_patterns_for_stack(stack: str) -> list[PatternDef]:
         return TYPESCRIPT_PATTERNS
     if stack == "python":
         return PYTHON_PATTERNS
+    if stack in ("java", "kotlin"):
+        return JAVA_PATTERNS
+    if stack == "go":
+        return GO_PATTERNS
+    if stack == "rust":
+        return RUST_PATTERNS
     return []
 
 

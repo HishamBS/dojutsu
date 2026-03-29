@@ -273,9 +273,11 @@ def main() -> None:
     elif stack.lower() in {"java", "kotlin", "jvm"}:
         graph = build_graph_stub(project_dir, stack, files)
     else:
-        # Default: attempt TypeScript analysis (common for mixed projects)
-        graph = build_graph_typescript(project_dir, files)
-        graph["stack"] = stack
+        # Unknown stack — return empty graph with warning, do NOT guess
+        print(f"WARNING: Dependency graph not implemented for stack '{stack}'.")
+        print(f"  Byakugan will proceed with finding-level analysis only (no blast radius tracing).")
+        graph = build_graph_stub(project_dir, stack, files)
+        graph["warning"] = f"No dependency analysis available for '{stack}'. Impact analysis will be limited."
 
     # Write output
     out_dir = project_dir / "docs" / "audit" / "deep"
