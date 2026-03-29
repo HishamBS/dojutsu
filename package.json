@@ -1,0 +1,9 @@
+{
+  "name": "naruto-trio",
+  "version": "1.0.0",
+  "description": "Codebase audit, autonomous remediation, and evidence-based QA pipeline for Claude Code",
+  "type": "module",
+  "author": "Hisham Bin Seddeq",
+  "license": "MIT",
+  "keywords": ["audit", "qa", "remediation", "code-quality", "pipeline", "claude-code"]
+}
