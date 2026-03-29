@@ -1,94 +1,122 @@
-# Quickstart
+# Quickstart: Zero to Hero in 5 Steps
 
-The dojutsu pipeline runs all 4 eyes autonomously. One command does everything. Individual eyes can also be run standalone.
+This guide gets you from "never heard of dojutsu" to "full codebase audit running" in under 5 minutes.
 
-## Recipe 0: Full Pipeline (Recommended)
+---
+
+## Step 1: Install
+
+Open your terminal and run these three commands:
+
+```bash
+git clone https://github.com/HishamBS/dojutsu.git ~/dojutsu
+cd ~/dojutsu
+bash setup.sh
+```
+
+The installer checks your Python version, installs the skills, and runs the test suite. You will see output like:
 
 ```
-cd your-project
+=== Dojutsu Pipeline Installer ===
+Python 3.12 detected
+Installed /rinnegan
+Installed /rasengan
+Installed /sharingan
+Installed /byakugan
+Installed /dojutsu
+...
+All tests passed
+=== Installation Complete ===
+```
+
+If you see "All tests passed" you are good to go.
+
+**Important:** After installation, close and reopen your coding agent so it picks up the new skills.
+
+---
+
+## Step 2: Open Your Coding Agent in Your Project
+
+Navigate to the project you want to audit and start your coding agent there. For example, with Claude Code:
+
+```bash
+cd ~/my-project
+claude
+```
+
+Or with Codex:
+
+```bash
+cd ~/my-project
+codex
+```
+
+You need to be in the root directory of the project you want to scan.
+
+---
+
+## Step 3: Type /dojutsu
+
+In your coding agent, type:
+
+```
 /dojutsu
 ```
 
-Runs: rinnegan (detect) -> byakugan (analyze) -> rasengan (fix, per phase) -> sharingan (verify, per phase) -> COMPLETE.
-Session-resilient: if your session ends, run `/dojutsu` again to resume.
+That is the only command you need. The pipeline starts automatically.
 
-## Individual Eyes
+---
 
-Each skill also runs autonomously on its own -- invoke it and let it work.
+## Step 4: Wait
 
-## Recipe 1: Audit a Codebase
+The pipeline runs through four stages without any input from you:
 
-Open Claude Code in your project directory and type:
+1. **Scan** -- Rinnegan finds every issue in your codebase
+2. **Analyze** -- Byakugan traces dependencies and generates executive reports
+3. **Fix** -- Rasengan applies fixes phase by phase, verifying the build after each one
+4. **Verify** -- Sharingan runs five verification checks after each phase
 
-```
-/rinnegan
-```
+A medium-sized project (20K-50K lines) typically takes 4-8 hours total. You do not need to watch it. Check back when it finishes, or periodically to see progress.
 
-**What happens:**
-1. Inventory creation -- catalogs all source files, detects stack and framework (~2 seconds)
-2. Grep scanner -- finds mechanical violations exhaustively (~5 seconds)
-3. LLM scanners -- dispatches agents to scan files by layer, finding deeper issues (~10-30 minutes depending on codebase size)
-4. Aggregation -- merges all findings into a single `findings.jsonl`
-5. Enrichment -- adds fix instructions (`target_code` or `fix_plan`) to each finding
-6. Phase generation -- creates ordered task files for remediation
-7. Documentation -- generates layer docs, master audit hub, cross-cutting analysis
+**If your session ends before the pipeline finishes** (timeout, crash, context limit), do not worry. Just open a new session in the same project and type `/dojutsu` again. It picks up exactly where it left off. No work is lost.
 
-**Output:** `docs/audit/` directory with everything needed for remediation.
+---
 
-**When it's done:** The pipeline script prints `PIPELINE_COMPLETE`.
+## Step 5: Read the Results
 
-## Recipe 2: Fix Audit Findings
-
-After rinnegan completes, type:
+When the pipeline finishes, open the executive report:
 
 ```
-/rasengan
+docs/audit/deep/narrative.md
 ```
 
-**What happens:**
-1. Reads the phase-ordered task files from `docs/audit/data/tasks/`
-2. For each task: reads the source file, applies the fix, verifies the build
-3. After each fix: updates the task JSON with `completed_at` timestamp
-4. After each phase: commits with message `fix(phase-N): [name] - X applied`
-5. Updates `progress.md` with phase completion status
+This is the plain-English summary written for stakeholders. It covers what was found, how serious it is, and what was done about it.
 
-**Build safety:** After every fix, rasengan runs `tsc --noEmit` (or equivalent for your stack). If the build breaks, it stops and reports the error before moving on.
+For more detail, explore the rest of the audit output:
 
-**When it's done:** The pipeline prints `ALL_PHASES_COMPLETE`.
+| What you want | Where to find it |
+|--------------|-----------------|
+| Big picture overview | `docs/audit/master-audit.md` |
+| Executive narrative (for stakeholders) | `docs/audit/deep/narrative.md` |
+| Compliance scorecard | `docs/audit/deep/scorecard.md` |
+| Detailed findings for a specific area | `docs/audit/layers/*.md` |
+| Patterns across multiple areas | `docs/audit/cross-cutting.md` |
+| Remediation progress tracker | `docs/audit/progress.md` |
+| Machine-readable findings data | `docs/audit/data/findings.jsonl` |
 
-## Recipe 3: Verify Changes
+---
 
-After rasengan completes (or after any code changes), type:
+## What If I Only Want to Scan (No Fixes)?
 
-```
-/sharingan
-```
+Type `/rinnegan` instead of `/dojutsu`. It produces the full audit report without changing any code in your project.
 
-**What happens:**
-- Gate 0: Type-check, lint, stub detection (deterministic, unfakeable)
-- Gate 1: Spec compliance with file:line evidence
-- Gate 2: Code correctness checks (SSOT, security, typing)
-- Gate 3: Independent verification by a fresh-context agent
-- Gate 4: Runtime checks (if applicable)
-- Gate 5: Reconciliation and HMAC-signed verdict
+---
 
-**Output:** CLEAR (all gates pass) or BLOCKED (with specific failures to fix).
+## What If Something Goes Wrong?
 
-## Full Pipeline
+- **"python3 not found"** -- Install Python 3.9+: `brew install python@3.12` (macOS) or `sudo apt install python3` (Linux)
+- **Skills not showing up** -- Close and reopen your coding agent after installation
+- **Build breaks during fixing** -- Rasengan stops and reports the error. Fix it manually or run `/dojutsu` again
+- **Session ends mid-pipeline** -- Just type `/dojutsu` again in a new session. It resumes automatically.
 
-For a complete audit-fix-verify cycle:
-
-```
-/rinnegan          # Audit the codebase
-/rasengan          # Fix findings phase by phase
-/sharingan         # Verify everything is clean
-```
-
-Each command runs autonomously. You can walk away and check back when each completes.
-
-## Tips
-
-- **Large codebases (>100K LOC):** Rinnegan scanning may dispatch many parallel agents. This is normal.
-- **Build failures during rasengan:** The pipeline stops and reports which fix broke the build. Fix it manually or skip the task.
-- **Partial runs:** Both rinnegan and rasengan save state to disk. If interrupted, re-invoke the same command -- it picks up where it left off.
-- **Multiple projects:** Each project gets its own `docs/audit/` directory. The skills are stateless between projects.
+For more help, see the Troubleshooting section in [README.md](README.md).
