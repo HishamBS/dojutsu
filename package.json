@@ -1,7 +1,7 @@
 {
-  "name": "naruto-trio",
+  "name": "dojutsu",
   "version": "1.0.0",
-  "description": "Codebase audit, autonomous remediation, and evidence-based QA pipeline for Claude Code",
+  "description": "Codebase audit, deep analysis, autonomous remediation, and evidence-based QA pipeline for Claude Code",
   "type": "module",
   "author": "Hisham Bin Seddeq",
   "license": "MIT",

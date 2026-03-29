@@ -6,7 +6,7 @@ SKILLS_DIR="${HOME}/.coding-agent/skills"
 SHARINGAN_LINK="${HOME}/.config/spsm/sharingan"
 SETTINGS="${HOME}/.claude/settings.json"
 
-echo "=== Naruto Trio Installer ==="
+echo "=== Dojutsu Pipeline Installer ==="
 echo ""
 
 # 1. Check Python 3.9+
@@ -40,13 +40,24 @@ for skill in rinnegan rasengan sharingan byakugan dojutsu; do
     echo "Installed /$(basename "$target")"
 done
 
-# 3. Set up sharingan core symlink
+# 3. Set up sharingan core scripts at ~/.config/spsm/sharingan/
+# Sharingan gate scripts (verify-deterministic.sh, reconcile.sh, etc.) live here.
+# The skill SKILL.md references these paths directly.
 mkdir -p "$(dirname "$SHARINGAN_LINK")"
-if [ -L "$SHARINGAN_LINK" ]; then
-    rm "$SHARINGAN_LINK"
+if [ ! -d "$SHARINGAN_LINK" ] && [ ! -L "$SHARINGAN_LINK" ]; then
+    # Copy core scripts from the plugin's sharingan skill
+    SHARINGAN_SRC="$SCRIPT_DIR/skills/sharingan"
+    mkdir -p "$SHARINGAN_LINK"
+    for script in enforce.sh lib-project-types.sh reconcile.sh sharingan.sh \
+                  verify-deterministic.sh verify-evidence.sh verify-independent.sh verify-runtime.sh; do
+        if [ -f "$SHARINGAN_SRC/$script" ]; then
+            cp "$SHARINGAN_SRC/$script" "$SHARINGAN_LINK/$script"
+        fi
+    done
+    echo "Installed sharingan core scripts to $SHARINGAN_LINK"
+else
+    echo "Sharingan core already at $SHARINGAN_LINK (skipped)"
 fi
-ln -s "$SCRIPT_DIR/skills/sharingan/core" "$SHARINGAN_LINK"
-echo "Linked sharingan core to $SHARINGAN_LINK"
 
 # 4. Create stub policy if missing
 POLICY_DIR="${HOME}/.config/spsm/policy"

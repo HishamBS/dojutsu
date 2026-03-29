@@ -5,11 +5,11 @@ SKILLS_DIR="${HOME}/.coding-agent/skills"
 SHARINGAN_LINK="${HOME}/.config/spsm/sharingan"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "=== Naruto Trio Uninstaller ==="
+echo "=== Dojutsu Pipeline Uninstaller ==="
 echo ""
 
 # 1. Remove skill symlinks (only if they point to this plugin)
-for skill in rinnegan rasengan sharingan; do
+for skill in rinnegan rasengan sharingan byakugan dojutsu; do
     target="$SKILLS_DIR/$skill"
     if [ -L "$target" ]; then
         link_target="$(readlink "$target")"

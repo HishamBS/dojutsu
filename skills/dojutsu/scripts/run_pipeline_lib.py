@@ -40,8 +40,9 @@ def detect_stage(project_dir: str, state: dict) -> str:
     if not os.path.exists(os.path.join(audit_dir, "master-audit.md")):
         return "RINNEGAN_ACTIVE"
 
-    # 2. Byakugan: check for narrative.md (final output)
-    if not os.path.exists(os.path.join(deep_dir, "narrative.md")):
+    # 2. Byakugan: all 3 deliverables must exist
+    byakugan_outputs = ["narrative.md", "scorecard.md", "deployment-plan.md"]
+    if not all(os.path.exists(os.path.join(deep_dir, f)) for f in byakugan_outputs):
         return "BYAKUGAN_ACTIVE"
 
     # 3. Rasengan + Sharingan per-phase loop

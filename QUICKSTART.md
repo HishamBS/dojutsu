@@ -1,6 +1,20 @@
 # Quickstart
 
-Three recipes for using the naruto trio. Each skill runs autonomously -- invoke it and let it work.
+The dojutsu pipeline runs all 4 eyes autonomously. One command does everything. Individual eyes can also be run standalone.
+
+## Recipe 0: Full Pipeline (Recommended)
+
+```
+cd your-project
+/dojutsu
+```
+
+Runs: rinnegan (detect) -> byakugan (analyze) -> rasengan (fix, per phase) -> sharingan (verify, per phase) -> COMPLETE.
+Session-resilient: if your session ends, run `/dojutsu` again to resume.
+
+## Individual Eyes
+
+Each skill also runs autonomously on its own -- invoke it and let it work.
 
 ## Recipe 1: Audit a Codebase
 
