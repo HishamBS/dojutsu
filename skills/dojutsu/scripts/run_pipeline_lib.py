@@ -21,10 +21,13 @@ except ImportError:
 
 from dojutsu_state import (
     append_progress,
+    check_budget,
+    clear_dispatch_log,
     clear_sentinel,
     default_state,
     ensure_sentinel,
     get_head_sha,
+    get_tokens_used,
     is_eye_complete,
     load_state,
     read_progress,
@@ -37,6 +40,37 @@ from dojutsu_state import (
 
 MAX_FAILURES_PER_EYE = 2
 MAX_ESCALATED_FAILURES = 2
+RATE_LIMIT_KEYWORDS = ["rate limit", "limit exceeded", "too many requests", "429", "quota",
+                       "hit your limit", "resets"]
+
+
+def _pause_pipeline(
+    project_dir: str, state: dict, eye: str, reason: str
+) -> int:
+    """Pause pipeline gracefully — save state, log, print instructions."""
+    prefix = get_progress_prefix()
+    try:
+        budget = load_config().get("pipeline", {}).get("session_token_budget", 500000)
+    except Exception:
+        budget = 500000
+    used = get_tokens_used(project_dir)
+
+    print(f"")
+    print(f"{prefix} === PIPELINE PAUSED ===")
+    print(f"{prefix} Reason: {reason}")
+    print(f"{prefix} Tokens used this session: {used:,} / {budget:,}")
+    print(f"{prefix}")
+    print(f"{prefix} To resume: start a new session and type /dojutsu")
+    print(f"{prefix} The pipeline picks up exactly where it left off.")
+    print(f"")
+
+    append_progress(
+        project_dir, stage=state["stage"], eye=eye,
+        summary=f"Paused: {reason} ({used:,} tokens used)",
+        exit_reason="rate_limited",
+    )
+    save_state(project_dir, state)
+    return 0
 
 
 def detect_stage(project_dir: str, state: dict) -> str:
@@ -93,6 +127,15 @@ def _get_build_command(project_dir: str) -> str:
 
 def _delegate_to_eye(eye: str, project_dir: str, state: dict) -> int:
     """Run an eye's pipeline script and handle its output."""
+    # Budget check BEFORE dispatching
+    try:
+        budget = load_config().get("pipeline", {}).get("session_token_budget", 500000)
+    except Exception:
+        budget = 500000
+    ok, reason = check_budget(project_dir, budget)
+    if not ok:
+        return _pause_pipeline(project_dir, state, eye, reason)
+
     try:
         eye_script = resolve_eye_script(eye)
     except FileNotFoundError as e:
@@ -107,6 +150,11 @@ def _delegate_to_eye(eye: str, project_dir: str, state: dict) -> int:
 
     stdout = result.stdout.strip()
     stderr = result.stderr.strip()
+
+    # Check for rate limit errors FIRST (don't retry these)
+    combined_output = (stdout + " " + stderr).lower()
+    if any(kw in combined_output for kw in RATE_LIMIT_KEYWORDS):
+        return _pause_pipeline(project_dir, state, eye, "Rate limited by provider")
 
     # Check for script errors
     if result.returncode != 0 and not stdout:
@@ -276,17 +324,36 @@ def run_pipeline(project_dir: str) -> int:
     state = load_state(project_dir)
     ensure_sentinel(project_dir)
 
-    # Increment session count if this looks like a new session
+    # Detect session resume (rate limit, context exhaustion, or manual pause)
     last_progress = read_progress(project_dir, last_n=1)
-    if last_progress and last_progress[0].get("exit_reason") == "context_exhaustion":
-        state["session_count"] = state.get("session_count", 1) + 1
-        append_progress(
-            project_dir,
-            stage=state["stage"],
-            eye="dojutsu",
-            summary=f"Session {state['session_count']} resumed from context exit",
-            git_checkpoint=get_head_sha(project_dir),
-        )
+    is_resume = False
+    resume_reason = ""
+    if last_progress:
+        last_exit = last_progress[0].get("exit_reason")
+        if last_exit in ("rate_limited", "context_exhaustion", "manual_pause"):
+            is_resume = True
+            resume_reason = last_progress[0].get("summary", "unknown")
+            state["session_count"] = state.get("session_count", 1) + 1
+            # Clear dispatch log for fresh budget in new session
+            clear_dispatch_log(project_dir)
+            # Clear exit_reason so we don't re-detect on next run within same session
+            append_progress(
+                project_dir, stage=state["stage"], eye="dojutsu",
+                summary=f"Session {state['session_count']} started",
+                exit_reason=None,
+            )
+
+    if is_resume:
+        prefix = get_progress_prefix()
+        print(f"")
+        print(f"{prefix} === RESUMING PIPELINE (session {state['session_count']}) ===")
+        print(f"{prefix}")
+        print(f"{prefix} Previous session: {resume_reason}")
+        print(f"{prefix} Resuming from: {state['stage']}")
+        print(f"{prefix}")
+        print(f"{prefix} *** IMPORTANT: Follow the ACTION below. Do NOT improvise. ***")
+        print(f"{prefix} *** Do NOT write scripts to generate files. The pipeline handles it. ***")
+        print(f"")
 
     # Detect current stage from disk artifacts
     detected = detect_stage(project_dir, state)

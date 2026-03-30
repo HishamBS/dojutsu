@@ -19,6 +19,7 @@ STATE_FILE = "docs/audit/data/dojutsu-state.json"
 PROGRESS_FILE = "docs/audit/data/dojutsu-progress.jsonl"
 SENTINEL_FILE = "docs/audit/data/.dojutsu-active"
 HMAC_KEY_FILE = "docs/audit/data/.dojutsu-hmac-key"  # Per-project, resolved relative to project_dir
+DISPATCH_LOG = "docs/audit/data/dispatch-log.jsonl"
 
 SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "REVIEW": 4}
 
@@ -335,3 +336,56 @@ def is_eye_complete(stdout: str, eye: str) -> bool:
             if eye == "rasengan" and "ALL_PHASES_COMPLETE" in stripped:
                 return True
     return False
+
+
+# --- Token Budget Tracking ---
+
+def get_tokens_used(project_dir: str) -> int:
+    """Sum actual tokens from all dispatches this session."""
+    log_path = os.path.join(project_dir, DISPATCH_LOG)
+    if not os.path.exists(log_path):
+        return 0
+    total = 0
+    with open(log_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+                total += entry.get("tokens", 0)
+            except json.JSONDecodeError:
+                continue
+    return total
+
+
+def check_budget(project_dir: str, budget: int = 500000) -> tuple[bool, str]:
+    """Check if we have budget for another dispatch."""
+    used = get_tokens_used(project_dir)
+    remaining = budget - used
+    if remaining < 30000:  # not enough for even one cheap dispatch
+        return False, f"{used:,} tokens used of {budget:,} budget ({remaining:,} remaining)"
+    return True, ""
+
+
+def log_dispatch(
+    project_dir: str, task: str, tokens: int, model: str = ""
+) -> None:
+    """Append actual token usage to dispatch log."""
+    log_path = os.path.join(project_dir, DISPATCH_LOG)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    entry = {
+        "task": task,
+        "tokens": tokens,
+        "model": model,
+        "timestamp": _now_iso(),
+    }
+    with open(log_path, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def clear_dispatch_log(project_dir: str) -> None:
+    """Clear the dispatch log for a new session."""
+    log_path = os.path.join(project_dir, DISPATCH_LOG)
+    if os.path.exists(log_path):
+        os.remove(log_path)
