@@ -9,6 +9,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from typing import TypedDict
 
 
@@ -288,6 +289,187 @@ SKIP_SUBSTRINGS = ("node_modules", ".next", "__tests__", ".test.", ".spec.", "te
 
 COMMENT_FILTER_RULES = ("R09", "R07")
 
+# ---- Flagged-files defaults (overridden by dojutsu.toml when available) ------
+
+DEFAULT_ALWAYS_SCAN_LAYERS: list[str] = [
+    "services", "middleware", "auth", "security",
+    "api-routes", "handlers", "routes",
+]
+
+DEFAULT_ALWAYS_SCAN_PATTERNS: list[str] = [
+    "main.ts", "main.py", "main.go", "main.rs",
+    "app.ts", "app.py",
+    "server.ts", "server.py", "server.go",
+    "index.ts",
+]
+
+DEFAULT_MIN_IMPORTS: int = 5
+
+DEFAULT_STRUCTURAL_SKIP_EXTENSIONS: list[str] = [
+    ".json", ".yaml", ".yml", ".toml", ".css", ".scss", ".less", ".env.example",
+]
+
+
+def _load_dojutsu_flagged_config() -> tuple[list[str], list[str], int, list[str]]:
+    """Load flagged-files config from dojutsu.toml if available, else use defaults.
+
+    Returns (always_scan_layers, always_scan_patterns, min_imports, skip_extensions).
+    """
+    try:
+        sys.path.insert(
+            0,
+            os.path.join(os.path.dirname(__file__), '..', '..', 'dojutsu', 'scripts'),
+        )
+        from dojutsu_config import get as dojutsu_get
+        layers = dojutsu_get("always_scan_layers.layers", DEFAULT_ALWAYS_SCAN_LAYERS)
+        patterns = dojutsu_get("always_scan_files.patterns", DEFAULT_ALWAYS_SCAN_PATTERNS)
+        min_imports = dojutsu_get("always_scan_files.min_imports", DEFAULT_MIN_IMPORTS)
+        skip_exts = dojutsu_get(
+            "structural_skip.extensions_always_skip", DEFAULT_STRUCTURAL_SKIP_EXTENSIONS,
+        )
+        return layers, patterns, min_imports, skip_exts
+    except (ImportError, FileNotFoundError):
+        return (
+            DEFAULT_ALWAYS_SCAN_LAYERS,
+            DEFAULT_ALWAYS_SCAN_PATTERNS,
+            DEFAULT_MIN_IMPORTS,
+            DEFAULT_STRUCTURAL_SKIP_EXTENSIONS,
+        )
+
+
+def _count_imports(filepath: str) -> int:
+    """Count import/require/use/include statements in a source file."""
+    import_pattern = re.compile(
+        r"^\s*(?:import\b|from\b|require\(|use\b|include\b|#include\b)",
+    )
+    count = 0
+    try:
+        with open(filepath, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if import_pattern.match(line):
+                    count += 1
+    except OSError:
+        pass
+    return count
+
+
+def _is_structural_only(filepath: str) -> bool:
+    """Return True if file content is purely type declarations or re-exports."""
+    reexport_pattern = re.compile(
+        r"^\s*(?:export\s+\{|export\s+\*|export\s+default\s|export\s+type\s|"
+        r"export\s+interface\s|type\s+\w+\s*=|interface\s+\w+|pub\s+type\s|pub\s+use\s)",
+    )
+    try:
+        with open(filepath, encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+    except OSError:
+        return False
+    if not lines:
+        return True
+    meaningful = 0
+    structural = 0
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("//") or line.startswith("#") or line.startswith("/*") or line.startswith("*"):
+            continue
+        meaningful += 1
+        if reexport_pattern.match(line):
+            structural += 1
+    if meaningful == 0:
+        return True
+    return structural / meaningful >= 0.9
+
+
+def _matches_entry_point(rel_path: str, patterns: list[str]) -> bool:
+    """Return True if rel_path basename matches any entry-point pattern."""
+    basename = os.path.basename(rel_path)
+    return basename in patterns
+
+
+def generate_flagged_files(
+    audit_dir: str,
+    findings: list[Finding],
+    project_dir: str | None = None,
+) -> dict[str, list[dict[str, str]]]:
+    """Classify every inventory file and write flagged-files.json.
+
+    Categories:
+    - flagged: grep found at least 1 finding in this file
+    - always_scan: file is in an always-scan layer, has 5+ imports, or matches entry-point patterns
+    - structural_only: extension is in skip list or content is pure type declarations/re-exports
+    - llm_scan: everything else -- included in LLM scan
+
+    Returns the classification dict.
+    """
+    inv_path = os.path.join(audit_dir, "data/inventory.json")
+    with open(inv_path) as fh:
+        inv = json.load(fh)
+
+    always_layers, always_patterns, min_imports, skip_exts = _load_dojutsu_flagged_config()
+
+    # Collect files that have findings
+    flagged_set: set[str] = {f["file"] for f in findings}
+
+    result: dict[str, list[dict[str, str]]] = {
+        "flagged": [],
+        "always_scan": [],
+        "structural_only": [],
+        "llm_scan": [],
+    }
+
+    for entry in inv["files"]:
+        rel_path: str = entry["path"]
+        layer: str = entry.get("layer", "misc")
+        _, ext = os.path.splitext(rel_path)
+
+        # 1. flagged: grep found findings
+        if rel_path in flagged_set:
+            result["flagged"].append({"path": rel_path, "layer": layer, "reason": "grep_finding"})
+            continue
+
+        # 2. structural_only: extension in skip list or pure re-exports/type decls
+        if ext in skip_exts:
+            result["structural_only"].append(
+                {"path": rel_path, "layer": layer, "reason": f"skip_extension:{ext}"},
+            )
+            continue
+
+        if project_dir and _is_structural_only(os.path.join(project_dir, rel_path)):
+            result["structural_only"].append(
+                {"path": rel_path, "layer": layer, "reason": "type_decl_or_reexport"},
+            )
+            continue
+
+        # 3. always_scan: layer, high imports, or entry-point pattern
+        if layer in always_layers:
+            result["always_scan"].append(
+                {"path": rel_path, "layer": layer, "reason": f"always_scan_layer:{layer}"},
+            )
+            continue
+
+        if _matches_entry_point(rel_path, always_patterns):
+            result["always_scan"].append(
+                {"path": rel_path, "layer": layer, "reason": "entry_point_pattern"},
+            )
+            continue
+
+        if project_dir and _count_imports(os.path.join(project_dir, rel_path)) >= min_imports:
+            result["always_scan"].append(
+                {"path": rel_path, "layer": layer, "reason": "high_import_count"},
+            )
+            continue
+
+        # 4. Everything else goes to LLM scan
+        result["llm_scan"].append({"path": rel_path, "layer": layer, "reason": "default"})
+
+    # Write output
+    output_path = os.path.join(audit_dir, "data/flagged-files.json")
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w") as fh:
+        json.dump(result, fh, indent=2)
+
+    return result
+
 
 # ---- Core logic --------------------------------------------------------------
 
@@ -451,6 +633,7 @@ def write_results(
     audit_dir: str,
     findings: list[Finding],
     source_files: list[str],
+    project_dir: str | None = None,
 ) -> str:
     """Write scanner output files and return the output file path.
 
@@ -458,6 +641,7 @@ def write_results(
     - ``data/scanner-output/grep-scanner.jsonl``
     - ``data/scanner-output/scope-map.json`` (updated)
     - ``data/scanner-output/grep-scanner.status``
+    - ``data/flagged-files.json`` (file classification for downstream consumers)
     """
     output_file = os.path.join(audit_dir, "data/scanner-output/grep-scanner.jsonl")
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
@@ -477,6 +661,9 @@ def write_results(
     status_path = os.path.join(audit_dir, "data/scanner-output/grep-scanner.status")
     with open(status_path, "w") as fh:
         fh.write(f"COMPLETE {len(findings)}\n")
+
+    # Generate flagged-files.json for downstream consumers
+    generate_flagged_files(audit_dir, findings, project_dir)
 
     return output_file
 

@@ -204,6 +204,8 @@ def format_action_output(
     lines.append(f"  Has fix_plan: {has_fp}")
 
     lines.append(f"\nACTION: Fix this violation.")
+    lines.append(f"  MODEL: sonnet")
+    lines.append(f"  ROLE: dojutsu-fixer (if agent-mux configured)")
     lines.append(f"  1. Read file: {next_task['file']}")
     lines.append(
         f"  2. Find pattern '{next_task.get('search_pattern', '')}' "

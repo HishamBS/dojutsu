@@ -140,6 +140,8 @@ def run_pipeline(project_dir: str) -> int:
         total_clusters = len(clusters["clusters"])
         print(f"\nCLUSTERS: {total_clusters}")
         print(f"\nACTION: Read {skill_dir}/impact-analysis-prompt.md then dispatch impact analysis agents.")
+        print(f"  MODEL: sonnet")
+        print(f"  ROLE: dojutsu-analyst (if agent-mux configured)")
         print(f"  Each agent receives: cluster definition + dependency graph edges + findings JSONL")
         print(f"  Dispatch up to 5 agents in parallel. Each handles 5-10 clusters.")
         print(f"  Large clusters (>10 findings) get their own agent.")
@@ -159,6 +161,9 @@ def run_pipeline(project_dir: str) -> int:
 
     if state == "NEEDS_NARRATIVE":
         print(f"\nACTION: Read {skill_dir}/narrative-generator-prompt.md then dispatch narrative generator.")
+        print(f"  MODEL: opus")
+        print(f"  ROLE: dojutsu-narrator (if agent-mux configured)")
+        print(f"  NOTE: This is THE premium document. Opus quality justified here (1 dispatch only).")
         print(f"  Agent reads: {deep_dir}/impact-analysis.jsonl + {deep_dir}/clusters.json + inventory")
         print(f"  Agent writes: {deep_dir}/narrative.md (2000-4000 lines, v5-quality)")
         print(f"  Then run this script again.")
@@ -166,6 +171,8 @@ def run_pipeline(project_dir: str) -> int:
 
     if state == "NEEDS_SCORECARD":
         print(f"\nACTION: Read {skill_dir}/scorecard-generator-prompt.md then dispatch scorecard generator.")
+        print(f"  MODEL: sonnet")
+        print(f"  ROLE: dojutsu-enricher (if agent-mux configured)")
         print(f"  Agent reads: findings.jsonl + clusters.json + inventory.json")
         print(f"  Agent writes: {deep_dir}/scorecard.md")
         print(f"  Then run this script again.")
@@ -186,6 +193,8 @@ def run_pipeline(project_dir: str) -> int:
         else:
             print(f"\nHIGH/CRITICAL findings: {high_critical}")
             print(f"\nACTION: Read {skill_dir}/deployment-plan-prompt.md then dispatch deployment plan generator.")
+            print(f"  MODEL: sonnet")
+            print(f"  ROLE: dojutsu-enricher (if agent-mux configured)")
             print(f"  Agent reads: impact-analysis.jsonl + clusters.json + narrative.md")
             print(f"  Agent writes: {deep_dir}/deployment-plan.md")
             print(f"  Then run this script again.")

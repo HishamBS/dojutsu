@@ -110,6 +110,9 @@ if state == "NEEDS_SCANNING":
     print(f"\nSCAN_PROGRESS: {complete}/{plan['total_batches']} complete, {len(pending)} pending")
     print(f"STACK: {inv.get('stack', 'unknown')}/{inv.get('framework', 'unknown')}")
     print(f"\nACTION: Read {skill_dir}/scanner-prompt.md then dispatch up to 5 scanner Agents.")
+    print(f"  MODEL: haiku")
+    print(f"  ROLE: dojutsu-scanner (if agent-mux configured)")
+    print(f"  NOTE: Scanners do pattern detection — cheap models handle this well. Do NOT use opus.")
     print(f"Each scanner Agent prompt must include: scanner-prompt.md content + file list + stack + layer + output path.")
     print(f"After ALL dispatched scanners complete, update scan-plan.json: set each batch status to 'complete'.")
     print(f"Then run this script again.\n")
@@ -125,6 +128,8 @@ elif state == "NEEDS_AGGREGATION":
 
     print(f"\nSCANNER_OUTPUT: {len(scanner_files)} files, {total_findings} total findings")
     print(f"\nACTION: Read {skill_dir}/aggregator-prompt.md then dispatch 1 Aggregator Agent.")
+    print(f"  MODEL: haiku")
+    print(f"  ROLE: dojutsu-scanner (if agent-mux configured)")
     print(f"Include in prompt: aggregator-prompt.md content + these paths:")
     print(f"  SCANNER_OUTPUT_DIR: {audit_dir}/data/scanner-output/")
     print(f"  INVENTORY_PATH: {audit_dir}/data/inventory.json")
@@ -140,6 +145,9 @@ elif state == "NEEDS_ENRICHMENT":
 
     print(f"\nFINDINGS: {len(findings)} across {len(layers)} layers")
     print(f"\nACTION: Read {skill_dir}/fix-enricher-instructions.md then dispatch 1 Fix Enricher Agent per layer.")
+    print(f"  MODEL: sonnet")
+    print(f"  ROLE: dojutsu-enricher (if agent-mux configured)")
+    print(f"  NOTE: Enrichers must understand code well enough to write correct fixes. Use sonnet, not haiku.")
     print(f"Each enricher reads findings.jsonl, filters for its layer, adds target_code/fix_plan, writes enriched/.")
     for name, count in layers.most_common():
         print(f"  LAYER: {name} ({count} findings) -> {audit_dir}/data/enriched/{name}.jsonl")
@@ -177,6 +185,10 @@ elif state == "NEEDS_GENERATION":
 
     print(f"\nFINDINGS: {findings_count}, LAYERS: {len(inv['layers'])}, LOC: {inv['total_loc']}")
     print(f"\nACTION: Read generator prompts then dispatch generators:")
+    print(f"  MODEL for layer generators: sonnet")
+    print(f"  MODEL for master-hub generator: opus (ONE dispatch — premium writing)")
+    print(f"  MODEL for cross-cutting generator: sonnet")
+    print(f"  ROLES: dojutsu-enricher (layers/cross-cutting), dojutsu-narrator (master-hub)")
     print(f"  {skill_dir}/layer-generator-prompt.md (per layer)")
     print(f"  {skill_dir}/master-hub-generator-prompt.md (1 hub, 300-500 lines)")
     print(f"  {skill_dir}/cross-cutting-generator-prompt.md (1 cross-cutting)")

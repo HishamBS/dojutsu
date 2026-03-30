@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """Usage: create-scan-plan.py <audit_dir>
-Creates scan-plan.json with one batch per 30 source files."""
-import json, math, sys
+Creates scan-plan.json with one batch per batch_size source files (from dojutsu.toml)."""
+import json, math, os, sys
+
+# Read batch_size from dojutsu.toml via shared config loader
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'dojutsu', 'scripts'))
+try:
+    from dojutsu_config import get_batch_size
+    batch_size = get_batch_size()
+except (ImportError, FileNotFoundError):
+    batch_size = 30  # sensible default if config not found
 
 audit_dir = sys.argv[1]
 inv = json.load(open(f"{audit_dir}/data/inventory.json"))
 files = [f["path"] for f in inv["files"] if f.get("tag", "SOURCE") in ("SOURCE", "TEST")]
-batch_size = 120
 batches = []
 for i in range(math.ceil(len(files) / batch_size)):
     batch_files = files[i*batch_size:(i+1)*batch_size]

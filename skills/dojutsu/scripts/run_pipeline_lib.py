@@ -11,6 +11,14 @@ import os
 import subprocess
 from typing import Optional
 
+try:
+    from dojutsu_config import get_dispatch_mode, get_progress_prefix, load_config
+except ImportError:
+    # Config not available — use defaults
+    def get_dispatch_mode() -> str: return "native"
+    def get_progress_prefix() -> str: return "[dojutsu]"
+    def load_config() -> dict: return {}
+
 from dojutsu_state import (
     append_progress,
     clear_sentinel,
@@ -139,7 +147,15 @@ def _delegate_to_eye(eye: str, project_dir: str, state: dict) -> int:
         print(f"\nACTION: Run this script again to advance to the next eye.")
         return 0
 
-    # Eye needs LLM action — pass through verbatim
+    # Eye needs LLM action — pass through with dispatch mode header
+    mode = get_dispatch_mode()
+    prefix = get_progress_prefix()
+    print(f"{prefix} DISPATCH_MODE: {mode}")
+    if mode == "agent-mux":
+        print(f"{prefix} When ACTION says ROLE: use `printf '{{\"role\":\"<ROLE>\",\"prompt\":\"...\",\"cwd\":\"{project_dir}\"}}' | agent-mux --stdin`")
+    else:
+        print(f"{prefix} When ACTION says MODEL: use Agent(model=\"<MODEL>\", prompt=\"...\") for subagent dispatch")
+    print()
     print(stdout)
     if stderr:
         print(stderr)
@@ -173,19 +189,22 @@ def _emit_sharingan_action(
     print(f"Phase {phase_num} is complete. Running full sharingan verification.")
     print()
     print(f"ACTION: Run full sharingan (all 5 gates) for Phase {phase_num}.")
+    print(f"  MODEL for gates 1,2,4: sonnet")
+    print(f"  MODEL for gate 3: haiku (MUST be different model/engine from builder for independence)")
+    print(f"  ROLE for gate 3: dojutsu-verifier (if agent-mux — routes to DIFFERENT engine)")
     print(f"  Plan file: {task_file}")
     print(f"  Base commit: {base_commit}")
     print()
-    print(f"  Gate 0 (deterministic build):")
+    print(f"  Gate 0 (deterministic build — no LLM):")
     print(f"    Run: bash {sharingan_dir}/verify-deterministic.sh {base_commit}")
     print()
-    print(f"  Gate 1 (spec compliance):")
+    print(f"  Gate 1 (spec compliance — MODEL: sonnet):")
     print(f"    For each task in {task_file}, verify the fix is present with file:line evidence.")
     print()
-    print(f"  Gate 2 (code correctness):")
+    print(f"  Gate 2 (code correctness — MODEL: sonnet):")
     print(f"    Check SSOT, security, typing on files modified since {base_commit}.")
     print()
-    print(f"  Gate 3 (independent verification):")
+    print(f"  Gate 3 (independent verification — MODEL: haiku, ROLE: dojutsu-verifier):")
     print(f"    Run: bash {sharingan_dir}/verify-independent.sh --plan {task_file} --base {base_commit}")
     print()
     print(f"  Gate 4 (runtime):")
