@@ -22,6 +22,8 @@ Each finding is one JSON object per line in `findings.jsonl`:
   "search_pattern": "verify=False",
   "phase": 1,
   "effort": "low",
+  "confidence": "high",
+  "confidence_reason": "HIGH: TLS validation disabled on external HTTP client (R05-H1)",
   "layer": "services",
   "scanner": "services-layer",
   "completed_at": null,
@@ -51,6 +53,8 @@ Each finding is one JSON object per line in `findings.jsonl`:
 | `fix_plan` | No | array | Multi-step fix plan for complex/architectural findings. Array of step objects, each with: `step` (int), `action` (create/edit/delete), `file` (string), `description` (string), `code` or `old_code`+`new_code` (strings). Used when `target_code` cannot express the fix as a single replacement. Rasengan executes steps sequentially. |
 | `phase` | Yes | int | Remediation phase (0-10) |
 | `effort` | Yes | enum | low / medium / high |
+| `confidence` | Yes | enum | HIGH / MEDIUM / LOW. Determined by the rule's precision criteria in rules-reference.md. HIGH = scanner is certain this is a real violation with clear fix. MEDIUM = likely violation, fix is reasonable. LOW = possible violation, context-dependent, may not need fixing. |
+| `confidence_reason` | Yes | string | 1-sentence justification for the confidence level. Must reference a specific precision criterion ID. Example: 'HIGH: component rendered inside .map() without React.memo (R04-H1)' |
 | `layer` | Yes | string | Architectural layer this file belongs to (from inventory) |
 | `scanner` | Yes | string | Which scanner produced this finding |
 | `search_pattern` | Yes | string | Grep-able pattern that identifies this violation (e.g., "verify=False"). Used by Rasengan for stale-fix detection when line numbers shift. |

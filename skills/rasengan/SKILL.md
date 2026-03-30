@@ -14,7 +14,9 @@ description: Use when fixing audit findings from a rinnegan scan, remediating en
 
 3. **Run the script again.** It gives you the next task. Repeat until `ALL_PHASES_COMPLETE`. Commit after each phase: `fix(phase-N): [name] - X applied`.
 
-4. **After ALL_PHASES_COMPLETE:** Run `/sharingan` to verify the full codebase builds clean and passes quality gates. This is mandatory per CLAUDE.md before claiming completion.
+4. **LOW-confidence review.** After HIGH+MEDIUM findings are auto-fixed in a phase, the script presents any LOW-confidence findings for human review. The human decides: fix, skip, or skip-all for a rule. Decisions persist in `docs/audit/data/human-decisions.json` and are not re-asked on subsequent runs.
+
+5. **After ALL_PHASES_COMPLETE:** Run `/sharingan` to verify the full codebase builds clean and passes quality gates. This is mandatory per CLAUDE.md before claiming completion.
 
 ## Reference Files (read when needed)
 

@@ -89,6 +89,11 @@ patterns = [
 ]
 min_imports = 5  # files with this many imports are always scanned (high fan-in)
 
+[confidence]
+auto_fix = ["high", "medium"]    # rasengan auto-fixes these
+human_review = ["low"]           # rasengan pauses for human decision on these
+skip_emit = true                 # findings matching SKIP criteria are not emitted by scanner
+
 [structural_skip]
 # Files that are structurally trivial — skip LLM reading
 # These are detected by content analysis, not name patterns

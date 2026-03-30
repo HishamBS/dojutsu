@@ -76,6 +76,10 @@ severity guidelines, and the remediation phase it maps to.
 
 **Duplication threshold:** A code block counts as duplication if: (1) 3+ contiguous lines are structurally identical, (2) appears in 2+ files or 2+ non-adjacent locations in same file, (3) is in production code (not test fixtures).
 
+### Confidence Criteria
+
+All findings for this rule are HIGH confidence by default. The rule's violation conditions are precise — if detected, the finding is real.
+
 **Phase:** 3 — SSOT/DRY
 
 ---
@@ -125,6 +129,10 @@ severity guidelines, and the remediation phase it maps to.
 | Minor formatting in service return values | MEDIUM |
 | Test helpers mixing concerns | LOW |
 
+### Confidence Criteria
+
+All findings for this rule are HIGH confidence by default. The rule's violation conditions are precise — if detected, the finding is real.
+
 **Phase:** 4 — Architecture
 
 ---
@@ -170,6 +178,10 @@ severity guidelines, and the remediation phase it maps to.
 | Mixed import/export conventions across the project | MEDIUM |
 | Inconsistent file naming (camel vs kebab vs snake) | MEDIUM |
 | Minor style differences in new files | LOW |
+
+### Confidence Criteria
+
+All findings for this rule are HIGH confidence by default. The rule's violation conditions are precise — if detected, the finding is real.
 
 **Phase:** 4 — Architecture
 
@@ -224,6 +236,21 @@ severity guidelines, and the remediation phase it maps to.
 | Blocking calls in async context | HIGH |
 | Missing memoization in frequently rendered components | MEDIUM |
 | Inline event handlers in leaf components | LOW |
+
+### Confidence Criteria
+
+| Level | ID | When |
+|-------|-----|------|
+| HIGH | R04-H1 | Component rendered inside .map()/.forEach() loop WITHOUT React.memo |
+| HIGH | R04-H2 | useEffect with missing dependency causing infinite re-render or stale closure |
+| HIGH | R04-H3 | N+1 query pattern (DB/API call inside loop) |
+| HIGH | R04-H4 | Inline object/array literal passed as prop to React.memo'd child |
+| MEDIUM | R04-M1 | Event handler inline in JSX of component >50 LOC |
+| MEDIUM | R04-M2 | useMemo/useCallback with empty deps capturing stale values |
+| MEDIUM | R04-M3 | Large component (>200 LOC) with zero memoization |
+| LOW | R04-L1 | Component without React.memo that renders infrequently (not in loop, parent stable) |
+| LOW | R04-L2 | useCallback on handler never passed as prop to child |
+| SKIP | R04-S1 | Component <20 LOC without memo (overhead > benefit) |
 
 **Phase:** 6 — Performance
 
@@ -300,6 +327,10 @@ severity guidelines, and the remediation phase it maps to.
 | A10 SSRF | `rg -n 'fetch\(\s*\w' --type ts -g '!*.test.*'` | User-controlled URLs in fetch() calls |
 | A10 SSRF | `rg -n 'RestTemplate\|WebClient\.create\(' --type java` | User-controlled URLs in Java HTTP clients |
 
+### Confidence Criteria
+
+All findings for this rule are HIGH confidence by default. The rule's violation conditions are precise — if detected, the finding is real.
+
 **Phase:** 1 — Security
 
 ---
@@ -358,6 +389,10 @@ severity guidelines, and the remediation phase it maps to.
 | Mutable default arguments | MEDIUM |
 | Missing annotations on private helper methods | LOW |
 
+### Confidence Criteria
+
+All findings for this rule are HIGH confidence by default. The rule's violation conditions are precise — if detected, the finding is real.
+
 **Phase:** 2 — Typing
 
 ---
@@ -408,6 +443,10 @@ severity guidelines, and the remediation phase it maps to.
 | No CI pipeline running checks | HIGH |
 | No pre-commit hooks | MEDIUM |
 | Individual tests skipped with justification | LOW |
+
+### Confidence Criteria
+
+All findings for this rule are HIGH confidence by default. The rule's violation conditions are precise — if detected, the finding is real.
 
 **Phase:** 9 — Verification
 
@@ -466,6 +505,17 @@ severity guidelines, and the remediation phase it maps to.
 |----------|-------------|---------------|
 | TypeScript | `rg -n 'console\.(log\|warn\|error\|debug\|info)' --type ts -g '!*.test.*' -g '!*.spec.*'` | Console statements in production TypeScript code |
 
+### Confidence Criteria
+
+| Level | ID | When |
+|-------|-----|------|
+| HIGH | R09-H1 | console.log/error that leaks user data or secrets |
+| HIGH | R09-H2 | Commented-out code block >5 lines (dead feature) |
+| MEDIUM | R09-M1 | console.log in production code (non-error path) |
+| MEDIUM | R09-M2 | Function >100 lines with >5 parameters |
+| LOW | R09-L1 | console.error in catch block (may be intentional) |
+| LOW | R09-L2 | Deeply nested ternary >2 levels (style preference) |
+
 **Phase:** 5 — Clean Code
 
 ---
@@ -515,6 +565,10 @@ severity guidelines, and the remediation phase it maps to.
 | Legacy API usage with modern alternative available | MEDIUM |
 | Unnecessary `from __future__` imports | LOW |
 
+### Confidence Criteria
+
+All findings for this rule are HIGH confidence by default. The rule's violation conditions are precise — if detected, the finding is real.
+
 **Phase:** 8 — Refactoring
 
 ---
@@ -562,6 +616,18 @@ severity guidelines, and the remediation phase it maps to.
 | Missing ADR for non-obvious architectural decisions | MEDIUM |
 | Minor docstring gaps on internal methods | LOW |
 
+### Confidence Criteria
+
+| Level | ID | When |
+|-------|-----|------|
+| HIGH | R11-H1 | Exported function with >3 parameters and no JSDoc |
+| HIGH | R11-H2 | Exported hook with side effects and no JSDoc |
+| MEDIUM | R11-M1 | Exported component with >5 props and no JSDoc |
+| MEDIUM | R11-M2 | Exported context provider without JSDoc |
+| LOW | R11-L1 | Simple utility <10 LOC without JSDoc |
+| SKIP | R11-S1 | Re-export barrel (export { X } from './X') |
+| SKIP | R11-S2 | Type/interface export (self-documenting) |
+
 **Phase:** 10 — Documentation
 
 ---
@@ -608,6 +674,10 @@ severity guidelines, and the remediation phase it maps to.
 | Unpinned Docker image tags in production compose | HIGH |
 | Placeholder domains in non-test code | MEDIUM |
 | Localhost fallbacks with env-var override available | LOW |
+
+### Confidence Criteria
+
+All findings for this rule are HIGH confidence by default. The rule's violation conditions are precise — if detected, the finding is real.
 
 **Phase:** 7 — Data Integrity
 
@@ -661,6 +731,18 @@ severity guidelines, and the remediation phase it maps to.
 | Array slices with magic numbers | MEDIUM |
 | Pixel values instead of design tokens | LOW |
 | Numeric literals in test setup | LOW |
+
+### Confidence Criteria
+
+| Level | ID | When |
+|-------|-----|------|
+| HIGH | R13-H1 | Number in business logic (pricing, limits, rate limits, retry counts) |
+| HIGH | R13-H2 | Same number appears in 2+ files (SSOT violation) |
+| MEDIUM | R13-M1 | Number represents a meaningful threshold (pagination limit, max items) |
+| MEDIUM | R13-M2 | Hardcoded port, URL, or API endpoint |
+| LOW | R13-L1 | CSS value in inline style (padding, gap, margin) |
+| LOW | R13-L2 | Array index or common math constant |
+| SKIP | R13-S1 | 0, 1, -1, 2 in boolean/trivial context (arr.length > 0, index + 1) |
 
 **Phase:** 5 — Clean Code
 
@@ -718,6 +800,10 @@ severity guidelines, and the remediation phase it maps to.
 | Console output in production code | MEDIUM |
 | Unused imports | LOW |
 
+### Confidence Criteria
+
+All findings for this rule are HIGH confidence by default. The rule's violation conditions are precise — if detected, the finding is real.
+
 **Phase:** 0 — Foundation
 
 ---
@@ -769,6 +855,10 @@ severity guidelines, and the remediation phase it maps to.
 | Status code inconsistency between docs and implementation | HIGH |
 | Frontend type does not match backend response shape | HIGH |
 | Minor field ordering differences | LOW |
+
+### Confidence Criteria
+
+All findings for this rule are HIGH confidence by default. The rule's violation conditions are precise — if detected, the finding is real.
 
 **Phase:** 9 — Verification
 

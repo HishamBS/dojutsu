@@ -366,9 +366,80 @@ def run_pipeline(project_dir: str, out: TextIO | None = None) -> int:
     # Current phase info
     assert phase_data is not None
     tasks = phase_data["tasks"]
-    pending = [t for t in tasks if t["status"] == "pending"]
+    all_pending = [t for t in tasks if t["status"] == "pending"]
     completed = [t for t in tasks if t["status"] == "completed"]
     failed = [t for t in tasks if t.get("resolution") == "failed"]
+
+    # Split by confidence: HIGH+MEDIUM = auto-fix, LOW = human review
+    auto_fix_pending = [t for t in all_pending
+                        if t.get("confidence", "high") in ("high", "medium")]
+    low_pending = [t for t in all_pending
+                   if t.get("confidence") == "low"]
+
+    # Load human decisions for LOW findings
+    decisions_path = os.path.join(audit_dir, "data", "human-decisions.json")
+    human_decisions: dict = {}
+    if os.path.exists(decisions_path):
+        with open(decisions_path) as df:
+            human_decisions = json.load(df)
+
+    # Apply existing bulk decisions to LOW findings
+    bulk_rules = human_decisions.get("bulk_rules", {})
+    decided_ids = human_decisions.get("decided_ids", {})
+    for t in low_pending:
+        tid = t.get("id", "")
+        rule = t.get("rule", "")
+        if tid in decided_ids:
+            action = decided_ids[tid]
+            if action == "skip":
+                t["status"] = "completed"
+                t["resolution"] = "skipped"
+                t["notes"] = "Skipped by human decision"
+            # "fix" decisions stay pending — will be picked up below
+        elif rule in bulk_rules:
+            action = bulk_rules[rule]
+            if action in ("skip", "skip-all-low"):
+                t["status"] = "completed"
+                t["resolution"] = "skipped"
+                t["notes"] = f"Skipped by bulk decision: skip-all-{rule}-LOW"
+            elif action in ("fix", "fix-all-low"):
+                auto_fix_pending.append(t)  # promote to auto-fix
+
+    # Save any bulk-decision skips
+    if any(t["status"] == "completed" and t.get("notes", "").startswith("Skipped by")
+           for t in low_pending):
+        with open(current_phase_file, "w") as pf:
+            json.dump(phase_data, pf, indent=2)
+
+    # Recalculate after applying decisions
+    still_undecided_low = [t for t in all_pending
+                           if t.get("confidence") == "low"
+                           and t["status"] == "pending"
+                           and t.get("id", "") not in decided_ids
+                           and t.get("rule", "") not in bulk_rules]
+
+    # If no auto-fix tasks remain but undecided LOW exist → human review
+    if not auto_fix_pending and still_undecided_low:
+        out.write(f"\n{'='*60}\n")
+        out.write(f"LOW-CONFIDENCE REVIEW: {len(still_undecided_low)} findings need your input\n")
+        out.write(f"{'='*60}\n\n")
+        for i, t in enumerate(still_undecided_low[:15]):
+            out.write(f"[{i+1}/{len(still_undecided_low)}] {t.get('id','?')} [{t.get('rule','')}] {t['file']}:{t['line']}\n")
+            out.write(f"  {t.get('description', '')}\n")
+            out.write(f"  Confidence: LOW — {t.get('confidence_reason', 'no reason given')}\n")
+            if t.get("target_code"):
+                out.write(f"  Fix: {str(t['target_code'])[:120]}\n")
+            out.write("\n")
+        if len(still_undecided_low) > 15:
+            out.write(f"  ... and {len(still_undecided_low) - 15} more\n\n")
+        out.write(f"ACTION: Review LOW-confidence findings and record decisions.\n")
+        out.write(f"  Write to: {decisions_path}\n")
+        out.write(f'  Format: {{"decided_ids": {{"FINDING-ID": "fix|skip"}}, "bulk_rules": {{"R04": "skip-all-low"}}}}\n')
+        out.write(f"  Then run this script again to apply decisions and continue.\n")
+        return 0
+
+    # Use auto-fix list as the pending list for task selection
+    pending = auto_fix_pending
 
     out.write(
         f"\nPHASE: {current_phase_num} "
