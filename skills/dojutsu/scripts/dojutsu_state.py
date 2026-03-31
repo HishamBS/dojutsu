@@ -170,6 +170,9 @@ def _is_legal_transition(old: str, new: str) -> bool:
     # Static transitions
     if old in LEGAL_TRANSITIONS and new in LEGAL_TRANSITIONS[old]:
         return True
+    # Dynamic: RASENGAN_PHASE_N → RASENGAN_PHASE_M (rasengan manages its own phase ordering)
+    if old.startswith("RASENGAN_PHASE_") and new.startswith("RASENGAN_PHASE_"):
+        return True
     # Dynamic: RASENGAN_PHASE_N → SHARINGAN_PHASE_N
     if old.startswith("RASENGAN_PHASE_") and new.startswith("SHARINGAN_PHASE_"):
         return old.rsplit("_", 1)[1] == new.rsplit("_", 1)[1]

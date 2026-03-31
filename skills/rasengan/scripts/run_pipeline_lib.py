@@ -281,7 +281,8 @@ def run_pipeline(project_dir: str, out: TextIO | None = None) -> int:
     task_files = sorted(
         glob.glob(
             os.path.join(audit_dir, "data/tasks/phase-*-tasks.json")
-        )
+        ),
+        key=lambda f: int(os.path.basename(f).split("-")[1])  # numeric sort: phase-2 before phase-10
     )
 
     if not task_files:
