@@ -11,6 +11,16 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
+# Token budget tracking (graceful fallback if dojutsu not installed)
+import sys as _sys
+_dojutsu_scripts = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '..', 'dojutsu', 'scripts')
+if os.path.isdir(_dojutsu_scripts):
+    _sys.path.insert(0, os.path.realpath(_dojutsu_scripts))
+try:
+    from dojutsu_state import log_dispatch
+except ImportError:
+    def log_dispatch(*a, **kw): pass
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -139,6 +149,8 @@ def run_pipeline(project_dir: str) -> int:
 
         total_clusters = len(clusters["clusters"])
         print(f"\nCLUSTERS: {total_clusters}")
+        log_dispatch(project_dir, task="impact_analysis", tokens=30000 * min(total_clusters // 5 + 1, 5), model="sonnet")
+
         print(f"\nACTION: Read {skill_dir}/impact-analysis-prompt.md then dispatch impact analysis agents.")
         print(f"  MODEL: sonnet")
         print(f"  ROLE: dojutsu-analyst (if agent-mux configured)")
@@ -160,6 +172,8 @@ def run_pipeline(project_dir: str) -> int:
         return 0
 
     if state == "NEEDS_NARRATIVE":
+        log_dispatch(project_dir, task="narrator", tokens=40000, model="opus")
+
         print(f"\nACTION: Read {skill_dir}/narrative-generator-prompt.md then dispatch narrative generator.")
         print(f"  MODEL: opus")
         print(f"  ROLE: dojutsu-narrator (if agent-mux configured)")
@@ -170,6 +184,8 @@ def run_pipeline(project_dir: str) -> int:
         return 0
 
     if state == "NEEDS_SCORECARD":
+        log_dispatch(project_dir, task="scorecard", tokens=20000, model="sonnet")
+
         print(f"\nACTION: Read {skill_dir}/scorecard-generator-prompt.md then dispatch scorecard generator.")
         print(f"  MODEL: sonnet")
         print(f"  ROLE: dojutsu-enricher (if agent-mux configured)")
@@ -192,6 +208,8 @@ def run_pipeline(project_dir: str) -> int:
             state = get_state(project_dir)
         else:
             print(f"\nHIGH/CRITICAL findings: {high_critical}")
+            log_dispatch(project_dir, task="deployment_plan", tokens=20000, model="sonnet")
+
             print(f"\nACTION: Read {skill_dir}/deployment-plan-prompt.md then dispatch deployment plan generator.")
             print(f"  MODEL: sonnet")
             print(f"  ROLE: dojutsu-enricher (if agent-mux configured)")

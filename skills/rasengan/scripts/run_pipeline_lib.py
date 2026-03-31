@@ -11,6 +11,16 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import TextIO
 
+# Token budget tracking (graceful fallback if dojutsu not installed)
+import sys as _sys
+_dojutsu_scripts = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '..', 'dojutsu', 'scripts')
+if os.path.isdir(_dojutsu_scripts):
+    _sys.path.insert(0, os.path.realpath(_dojutsu_scripts))
+try:
+    from dojutsu_state import log_dispatch
+except ImportError:
+    def log_dispatch(*a, **kw): pass
+
 
 BUILD_COMMANDS: dict[str, str] = {
     "typescript": "npx tsc --noEmit",
@@ -480,6 +490,8 @@ def run_pipeline(project_dir: str, out: TextIO | None = None) -> int:
     # Output next task
     next_task = pending[0]
     task_index = tasks.index(next_task)
+
+    log_dispatch(project_dir, task=f"fix_{next_task.get('id', '?')}", tokens=5000, model="sonnet")
 
     action_output = format_action_output(
         next_task,

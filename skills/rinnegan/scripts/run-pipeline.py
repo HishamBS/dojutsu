@@ -4,6 +4,16 @@ Run repeatedly. Each run: check disk state, auto-advance deterministic steps, ou
 Usage: run-pipeline.py <project_dir>"""
 import json, os, sys, subprocess, glob
 
+# Token budget tracking (graceful fallback if dojutsu not installed)
+import sys as _sys
+_dojutsu_scripts = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '..', 'dojutsu', 'scripts')
+if os.path.isdir(_dojutsu_scripts):
+    _sys.path.insert(0, os.path.realpath(_dojutsu_scripts))
+try:
+    from dojutsu_state import log_dispatch
+except ImportError:
+    def log_dispatch(*a, **kw): pass
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from run_pipeline_lib import generate_dag_and_config, validate_null_fix_coverage
 
@@ -109,6 +119,11 @@ if state == "NEEDS_SCANNING":
 
     print(f"\nSCAN_PROGRESS: {complete}/{plan['total_batches']} complete, {len(pending)} pending")
     print(f"STACK: {inv.get('stack', 'unknown')}/{inv.get('framework', 'unknown')}")
+    inv = json.load(open(os.path.join(audit_dir, "data/inventory.json")))
+    avg_loc = inv["total_loc"] // max(len(inv["files"]), 1)
+    for b in pending[:5]:
+        log_dispatch(project_dir, task=f"scanner_{b['id']}", tokens=len(b['files']) * avg_loc * 4 + 2000, model="haiku")
+
     print(f"\nACTION: Read {skill_dir}/scanner-prompt.md then dispatch up to 5 scanner Agents.")
     print(f"  MODEL: haiku")
     print(f"  ROLE: dojutsu-scanner (if agent-mux configured)")
@@ -127,6 +142,8 @@ elif state == "NEEDS_AGGREGATION":
     total_findings = sum(sum(1 for _ in open(f)) for f in scanner_files)
 
     print(f"\nSCANNER_OUTPUT: {len(scanner_files)} files, {total_findings} total findings")
+    log_dispatch(project_dir, task="aggregator", tokens=15000, model="haiku")
+
     print(f"\nACTION: Read {skill_dir}/aggregator-prompt.md then dispatch 1 Aggregator Agent.")
     print(f"  MODEL: haiku")
     print(f"  ROLE: dojutsu-scanner (if agent-mux configured)")
@@ -144,6 +161,9 @@ elif state == "NEEDS_ENRICHMENT":
     os.makedirs(os.path.join(audit_dir, "data/enriched"), exist_ok=True)
 
     print(f"\nFINDINGS: {len(findings)} across {len(layers)} layers")
+    for name, count in layers.most_common():
+        log_dispatch(project_dir, task=f"enricher_{name}", tokens=count * 50, model="sonnet")
+
     print(f"\nACTION: Read {skill_dir}/fix-enricher-instructions.md then dispatch 1 Fix Enricher Agent per layer.")
     print(f"  MODEL: sonnet")
     print(f"  ROLE: dojutsu-enricher (if agent-mux configured)")
@@ -184,6 +204,11 @@ elif state == "NEEDS_GENERATION":
     findings_count = count_lines("data/findings.jsonl")
 
     print(f"\nFINDINGS: {findings_count}, LAYERS: {len(inv['layers'])}, LOC: {inv['total_loc']}")
+    for name, data in sorted(inv["layers"].items(), key=lambda x: -x[1]["loc"]):
+        log_dispatch(project_dir, task=f"gen_{name}", tokens=data["loc"] * 4, model="sonnet")
+    log_dispatch(project_dir, task="gen_master_hub", tokens=30000, model="opus")
+    log_dispatch(project_dir, task="gen_cross_cutting", tokens=20000, model="sonnet")
+
     print(f"\nACTION: Read generator prompts then dispatch generators:")
     print(f"  MODEL for layer generators: sonnet")
     print(f"  MODEL for master-hub generator: opus (ONE dispatch — premium writing)")
