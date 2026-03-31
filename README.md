@@ -20,13 +20,25 @@ Every issue is cataloged with its exact file and line number. Each one has a sev
 
 ---
 
+## What's New in v4
+
+- **Confidence-based findings.** Every finding now carries a confidence level (HIGH, MEDIUM, or LOW). HIGH-confidence findings are applied automatically. LOW-confidence findings are surfaced for human review before any changes are made, keeping you in control of uncertain fixes.
+
+- **Smart model routing.** The pipeline routes work to the right model tier for the job. Scanning and aggregation use fast, cheap models (Haiku-tier). Code understanding and fixing use mid-tier models (Sonnet-tier). Narrative generation and complex analysis use premium models (Opus-tier). This cuts cost without sacrificing quality where it matters.
+
+- **Session-resilient pipeline.** If your coding agent session ends mid-pipeline (timeout, crash, context limit), just open a new session and run `/dojutsu` again. It reads saved state files and picks up exactly where it left off. No work is repeated and no progress is lost.
+
+- **Human-in-the-loop review.** Findings with LOW confidence are not applied blindly. They are presented for your review with the reasoning behind the suggestion, so you can approve, modify, or skip them before any code is changed.
+
+---
+
 ## The Five Eyes
 
 Dojutsu is made up of five skills, each named after a visual power from Naruto. Together, they form a complete quality pipeline.
 
 ### Rinnegan -- The Scanner
 
-Rinnegan scans your entire codebase against 20 engineering rules covering security, typing, performance, architecture, and more. It examines every single file -- no sampling, no shortcuts. It produces a structured audit with findings organized by severity, by architectural layer, and by remediation phase. The output includes exact file paths, line numbers, the current problematic code, and the recommended replacement. When rinnegan finishes, you have a complete picture of every issue in your project.
+Rinnegan scans your entire codebase against 20 engineering rules covering security, typing, performance, architecture, and more. It examines every single file -- no sampling, no shortcuts. It produces a structured audit with findings organized by severity, by architectural layer, and by remediation phase. Each finding includes exact file paths, line numbers, the current problematic code, the recommended replacement, and a confidence level (HIGH, MEDIUM, or LOW). HIGH-confidence findings are applied automatically. LOW-confidence findings are flagged for human review before any changes are made, so you stay in control of uncertain fixes. When rinnegan finishes, you have a complete picture of every issue in your project.
 
 ### Byakugan -- The Analyst
 
@@ -57,7 +69,8 @@ You need two things:
    If you see `Python 3.9.0` or higher, you are good. If not, install it:
    - **macOS:** `brew install python@3.12`
    - **Linux:** `sudo apt install python3` (or your distro's equivalent)
-   - **Windows:** Download from [python.org](https://python.org)
+   - **Windows (WSL):** Install [WSL](https://learn.microsoft.com/en-us/windows/wsl/install), then `sudo apt install python3` inside your WSL terminal
+   - **Windows (native):** Download from [python.org](https://python.org) and ensure `python3` is on your PATH
 
 2. **A coding agent.** You need one of these tools installed and working:
    - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended)
@@ -66,6 +79,8 @@ You need two things:
    - [Gemini CLI](https://github.com/google-gemini/gemini-cli)
 
    If you can open your terminal, type the agent's command, and get a response, you are ready.
+
+**Platform support:** macOS, Linux, and Windows (via WSL). The installer (`setup.sh`) is a bash script. On Windows, use WSL to run it.
 
 ---
 
@@ -83,15 +98,19 @@ bash setup.sh
 
 1. **Checks your Python version.** If Python 3.9+ is not found, it tells you exactly how to install it and stops.
 
-2. **Installs the five skills.** It creates links from your coding agent's skill directory (`~/.coding-agent/skills/`) to the dojutsu source files. This means the `/rinnegan`, `/byakugan`, `/rasengan`, `/sharingan`, and `/dojutsu` commands become available in your agent.
+2. **Detects your coding agents.** It scans your PATH for supported agents (Claude Code, Codex, OpenCode, Gemini CLI) and reports which ones are available.
 
-3. **Sets up verification scripts.** Sharingan needs some helper scripts to run its checks. The installer copies these to `~/.config/spsm/sharingan/`.
+3. **Lets you choose an installation mode.** You pick between Agent-Mux mode (distributes work across multiple engines for speed and cost savings) or Native mode (uses your current agent only with model tier hints). If only one agent is detected, Native mode is the simpler choice.
 
-4. **Creates a default configuration.** A small config file is created at `~/.config/spsm/policy/agent-capabilities.yaml` with sensible defaults.
+4. **Creates symlinks for all five skills.** For each detected agent, it creates symbolic links from the agent's skill directory (e.g., `~/.claude/commands/`, `~/.codex/skills/`) to the dojutsu source files. This makes the `/rinnegan`, `/byakugan`, `/rasengan`, `/sharingan`, and `/dojutsu` commands available in your agent. Existing non-symlink directories are backed up before linking.
 
-5. **Makes scripts executable.** All shell scripts in the skills are marked as runnable.
+5. **Updates the dispatch configuration.** It writes the chosen mode and detected engines into `dojutsu.toml` so the pipeline knows how to route work.
 
-6. **Runs the test suite.** 93 tests run automatically to make sure everything installed correctly. If any fail, you will see a warning -- the skills are still installed but may have issues.
+6. **Makes scripts executable.** All shell scripts in the skills are marked as runnable.
+
+7. **Runs the test suite.** Tests run automatically to make sure everything installed correctly. If any fail, you will see a warning -- the skills are still installed but may have issues.
+
+8. **Verifies symlinks.** It confirms every skill symlink resolves correctly and is readable by your agent.
 
 After the installer finishes, **restart your coding agent** (close and reopen it) so it picks up the new skills.
 
@@ -305,11 +324,11 @@ python3 --version
 Your coding agent has not reloaded its skill list since you installed dojutsu.
 
 **Fix:**
-Close your coding agent completely and reopen it. If that does not work, verify the symlinks exist:
+Close your coding agent completely and reopen it. If that does not work, verify the symlinks exist in your agent's skill directory. For example, for Claude Code:
 ```bash
-ls -la ~/.coding-agent/skills/
+ls -la ~/.claude/commands/
 ```
-You should see `rinnegan`, `byakugan`, `rasengan`, `sharingan`, and `dojutsu` as symbolic links pointing to your `~/dojutsu/skills/` directory.
+You should see `rinnegan`, `byakugan`, `rasengan`, `sharingan`, and `dojutsu` as symbolic links pointing to your `~/dojutsu/skills/` directory. Other agents use their own paths (e.g., `~/.codex/skills/` for Codex, `~/.gemini/skills/` for Gemini CLI).
 
 ### 3. "No findings.jsonl found" when running rasengan or byakugan
 
