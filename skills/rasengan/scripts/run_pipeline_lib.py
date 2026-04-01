@@ -488,9 +488,33 @@ def run_pipeline(project_dir: str, out: TextIO | None = None) -> int:
         )
         return 0
 
-    # Output next task
+    # Output next task — but verify it's still valid first
     next_task = pending[0]
     task_index = tasks.index(next_task)
+
+    # Per-task revalidation: check current_code still exists at cited line
+    try:
+        _reval_script = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            '..', 'rinnegan', 'scripts', 'revalidate-tasks.py'
+        )
+        if os.path.exists(_reval_script):
+            sys.path.insert(0, os.path.dirname(_reval_script))
+            from importlib import import_module
+            # Use direct import since filename has hyphens
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("revalidate_tasks", _reval_script)
+            _rmod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(_rmod)
+            if not _rmod.quick_check_task(next_task, project_dir):
+                # Task is stale — save updated status, skip to next
+                with open(current_phase_file, "w") as pf:
+                    json.dump(phase_data, pf, indent=2)
+                out.write(f"  TASK_SKIPPED: {next_task.get('id','?')} — code no longer present (fixed by earlier phase)\n")
+                out.write(f"  Run this script again for the next task.\n")
+                return 0
+    except Exception:
+        pass  # Revalidation not available — proceed with task
 
     log_dispatch(project_dir, task=f"fix_{next_task.get('id', '?')}", tokens=5000, model="sonnet")
 

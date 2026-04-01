@@ -38,6 +38,37 @@ from dojutsu_state import (
     transition,
 )
 
+# Import revalidation (graceful fallback)
+_rinnegan_scripts = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '..', 'rinnegan', 'scripts'
+)
+if os.path.isdir(_rinnegan_scripts):
+    import sys as _sys2
+    _sys2.path.insert(0, os.path.realpath(_rinnegan_scripts))
+try:
+    from importlib import import_module as _imp
+    _reval = _imp("revalidate-tasks".replace("-", "_")) if False else None  # noqa — dynamic import won't work with hyphens
+except Exception:
+    _reval = None
+
+def _revalidate_remaining_tasks(project_dir: str, changed_only: bool = True) -> None:
+    """Revalidate pending tasks against live source code. Zero tokens."""
+    script = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        '..', 'rinnegan', 'scripts', 'revalidate-tasks.py'
+    )
+    if not os.path.exists(script):
+        return
+    args = ["python3", script, project_dir]
+    if changed_only:
+        args.append("--changed-only")
+    result = subprocess.run(args, capture_output=True, text=True, cwd=project_dir)
+    if result.stdout.strip():
+        prefix = get_progress_prefix()
+        for line in result.stdout.strip().split("\n"):
+            print(f"{prefix} {line}")
+
+
 MAX_FAILURES_PER_EYE = 2
 MAX_ESCALATED_FAILURES = 2
 RATE_LIMIT_KEYWORDS = ["rate limit", "limit exceeded", "too many requests", "429", "quota",
@@ -324,6 +355,12 @@ def run_pipeline(project_dir: str) -> int:
     state = load_state(project_dir)
     ensure_sentinel(project_dir)
 
+    # Startup revalidation: catch any code changes since last run
+    if state.get("stage", "").startswith(("RASENGAN_PHASE_", "SHARINGAN_PHASE_")):
+        prefix = get_progress_prefix()
+        print(f"{prefix} Startup: revalidating pending tasks against live code...")
+        _revalidate_remaining_tasks(project_dir, changed_only=False)
+
     # Detect session resume (rate limit, context exhaustion, or manual pause)
     last_progress = read_progress(project_dir, last_n=1)
     is_resume = False
@@ -375,6 +412,10 @@ def run_pipeline(project_dir: str) -> int:
             if prev_phase not in state["verified_phases"]:
                 state["verified_phases"].append(prev_phase)
                 state["verified_phases"].sort()
+                # Phase just verified — revalidate remaining tasks against live code
+                prefix = get_progress_prefix()
+                print(f"{prefix} Revalidating remaining tasks after Phase {prev_phase} fixes...")
+                _revalidate_remaining_tasks(project_dir, changed_only=True)
 
         try:
             transition(state, detected, project_dir)
