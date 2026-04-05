@@ -99,3 +99,8 @@ skip_emit = true                 # findings matching SKIP criteria are not emitt
 # These are detected by content analysis, not name patterns
 extensions_always_skip = [".json", ".yaml", ".yml", ".toml", ".css", ".scss", ".less", ".env.example"]
 generated_markers = ["// Generated", "/* auto-generated */", "// Code generated", "// DO NOT EDIT"]
+
+[flags]
+default_mode = "audit"              # "audit" or "fix"
+default_approval = "interactive"    # "interactive" or "auto"
+# default_phases = [0, 1, 2]       # uncomment to limit phases by default

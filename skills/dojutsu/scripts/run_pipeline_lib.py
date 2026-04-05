@@ -74,6 +74,16 @@ MAX_ESCALATED_FAILURES = 2
 RATE_LIMIT_KEYWORDS = ["rate limit", "limit exceeded", "too many requests", "429", "quota",
                        "hit your limit", "resets"]
 
+_DEFAULT_FLAGS = {
+    "mode": "audit",
+    "phases": None,
+    "approval": "interactive",
+    "resume": False,
+    "status": False,
+    "report": False,
+    "clean": False,
+}
+
 
 def _pause_pipeline(
     project_dir: str, state: dict, eye: str, reason: str
@@ -334,9 +344,124 @@ def _emit_completion_summary(project_dir: str, state: dict) -> int:
     return 0
 
 
-def run_pipeline(project_dir: str) -> int:
+def _resolve_flags(state: dict, cli_flags: dict | None) -> dict:
+    saved = state.get("flags", {})
+    if cli_flags and cli_flags.get("resume"):
+        return {**_DEFAULT_FLAGS, **saved, "resume": True}
+    if cli_flags:
+        return {**_DEFAULT_FLAGS, **cli_flags}
+    if saved:
+        return {**_DEFAULT_FLAGS, **saved}
+    return dict(_DEFAULT_FLAGS)
+
+
+def _emit_audit_complete(project_dir: str, state: dict) -> int:
+    audit_dir = os.path.join(project_dir, "docs/audit")
+    deep_dir = os.path.join(audit_dir, "deep")
+    data_dir = os.path.join(audit_dir, "data")
+    prefix = get_progress_prefix()
+    findings_count = 0
+    fp = os.path.join(data_dir, "findings.jsonl")
+    if os.path.exists(fp):
+        with open(fp) as f:
+            findings_count = sum(1 for _ in f)
+    clear_sentinel(project_dir)
+    print(f"")
+    print(f"{prefix} === AUDIT COMPLETE (read-only mode) ===")
+    print(f"{prefix}")
+    print(f"{prefix} Findings: {findings_count}")
+    print(f"{prefix} Narrative: {deep_dir}/narrative.md")
+    print(f"{prefix} Scorecard: {deep_dir}/scorecard.md")
+    print(f"{prefix} Deployment plan: {deep_dir}/deployment-plan.md")
+    print(f"{prefix}")
+    print(f"{prefix} To proceed with fixes:")
+    print(f"{prefix}   Run with --fix                    (interactive, approve per phase)")
+    print(f"{prefix}   Run with --fix --phases 0,1,2     (fix selected phases only)")
+    print(f"{prefix}   Run with --fix --auto             (fully autonomous)")
+    print(f"")
+    append_progress(project_dir, stage="AUDIT_COMPLETE", eye="dojutsu",
+                   summary=f"Audit complete: {findings_count} findings. Fix mode not enabled.")
+    return 0
+
+
+def _handle_status(project_dir: str) -> int:
+    prefix = get_progress_prefix()
+    try:
+        state = load_state(project_dir)
+    except (ValueError, FileNotFoundError):
+        print(f"{prefix} No pipeline state found.")
+        return 0
+    flags = state.get("flags", _DEFAULT_FLAGS)
+    print(f"{prefix} Stage: {state.get('stage', 'INACTIVE')}")
+    print(f"{prefix} Mode: {flags.get('mode', 'audit')}")
+    print(f"{prefix} Verified phases: {state.get('verified_phases', [])}")
+    print(f"{prefix} Sessions: {state.get('session_count', 1)}")
+    if flags.get('phases'):
+        print(f"{prefix} Phase filter: {flags['phases']}")
+    return 0
+
+
+def _handle_clean(project_dir: str) -> int:
+    import shutil
+    prefix = get_progress_prefix()
+    audit_dir = os.path.join(project_dir, "docs/audit")
+    if os.path.exists(audit_dir):
+        shutil.rmtree(audit_dir)
+        print(f"{prefix} Removed {audit_dir}/")
+    else:
+        print(f"{prefix} No audit data found.")
+    return 0
+
+
+def _handle_report(project_dir: str) -> int:
+    prefix = get_progress_prefix()
+    deep_dir = os.path.join(project_dir, "docs/audit/deep")
+    print(f"{prefix} To regenerate reports, delete existing files in {deep_dir}/ then run audit.")
+    return 0
+
+
+def _skip_phase(project_dir: str, state: dict, phase_num: int, flags: dict) -> int:
+    prefix = get_progress_prefix()
+    print(f"{prefix} Skipping phase {phase_num} (not in --phases {flags['phases']})")
+    data_dir = os.path.join(project_dir, "docs/audit/data")
+    rs_file = os.path.join(data_dir, "rasengan-state.json")
+    if os.path.exists(rs_file):
+        with open(rs_file) as f:
+            rs = json.load(f)
+        if phase_num not in rs.get("phases_completed", []):
+            rs.setdefault("phases_completed", []).append(phase_num)
+            with open(rs_file, "w") as f:
+                json.dump(rs, f, indent=2)
+    if phase_num not in state.get("verified_phases", []):
+        state.setdefault("verified_phases", []).append(phase_num)
+        state["verified_phases"].sort()
+        state.setdefault("skipped_phases", []).append(phase_num)
+        save_state(project_dir, state)
+    return 0
+
+
+def _emit_phase_approval(project_dir: str, state: dict, phase_num: int) -> int:
+    prefix = get_progress_prefix()
+    print(f"")
+    print(f"{prefix} === PHASE {phase_num} VERIFIED (CLEAR) ===")
+    print(f"{prefix} To continue to next phase, run this script again.")
+    print(f"{prefix} To stop here, do nothing.")
+    print(f"{prefix} To switch to auto mode, run with --fix --auto")
+    print(f"")
+    return 0
+
+
+def run_pipeline(project_dir: str, flags: dict | None = None) -> int:
     """Main entry point. Check state, delegate, or emit action."""
     project_dir = os.path.abspath(project_dir)
+
+    # Handle informational commands (no state mutation)
+    if flags and flags.get("status"):
+        return _handle_status(project_dir)
+    if flags and flags.get("report"):
+        return _handle_report(project_dir)
+    if flags and flags.get("clean"):
+        return _handle_clean(project_dir)
 
     # Pre-flight: verify all 5 skills are resolvable
     missing_skills = []
@@ -354,6 +479,11 @@ def run_pipeline(project_dir: str) -> int:
     # Load or create state
     state = load_state(project_dir)
     ensure_sentinel(project_dir)
+
+    # Resolve flags: CLI > saved > defaults
+    effective_flags = _resolve_flags(state, flags)
+    state["flags"] = effective_flags
+    save_state(project_dir, state)
 
     # Startup revalidation: catch any code changes since last run
     if state.get("stage", "").startswith(("RASENGAN_PHASE_", "SHARINGAN_PHASE_")):
@@ -395,6 +525,18 @@ def run_pipeline(project_dir: str) -> int:
     # Detect current stage from disk artifacts
     detected = detect_stage(project_dir, state)
 
+    # MODE ENFORCEMENT: audit mode stops before rasengan
+    if effective_flags["mode"] == "audit":
+        if detected.startswith(("RASENGAN_PHASE_", "SHARINGAN_PHASE_")) or detected == "PIPELINE_COMPLETE":
+            return _emit_audit_complete(project_dir, state)
+
+    # PHASE FILTER: skip phases not in --phases list
+    if effective_flags["mode"] == "fix" and effective_flags.get("phases") is not None:
+        if detected.startswith("RASENGAN_PHASE_"):
+            phase_num = int(detected.rsplit("_", 1)[1])
+            if phase_num not in effective_flags["phases"]:
+                return _skip_phase(project_dir, state, phase_num, effective_flags)
+
     # If stage changed, transition
     if detected != state["stage"]:
         # For phase transitions, record the start checkpoint
@@ -416,6 +558,10 @@ def run_pipeline(project_dir: str) -> int:
                 prefix = get_progress_prefix()
                 print(f"{prefix} Revalidating remaining tasks after Phase {prev_phase} fixes...")
                 _revalidate_remaining_tasks(project_dir, changed_only=True)
+
+                # Interactive approval gate
+                if effective_flags.get("approval") == "interactive" and effective_flags["mode"] == "fix":
+                    return _emit_phase_approval(project_dir, state, prev_phase)
 
         try:
             transition(state, detected, project_dir)

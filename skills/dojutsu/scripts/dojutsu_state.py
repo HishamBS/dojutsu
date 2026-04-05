@@ -26,7 +26,7 @@ SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "REVIEW": 4}
 LEGAL_TRANSITIONS: dict[str, list[str]] = {
     "INACTIVE": ["RINNEGAN_ACTIVE"],
     "RINNEGAN_ACTIVE": ["BYAKUGAN_ACTIVE"],
-    "BYAKUGAN_ACTIVE": ["RASENGAN_PHASE_0"],
+    "BYAKUGAN_ACTIVE": ["RASENGAN_PHASE_0", "AUDIT_COMPLETE"],
 }
 # Dynamic transitions for RASENGAN_PHASE_N / SHARINGAN_PHASE_N are validated separately
 
@@ -76,6 +76,8 @@ def default_state() -> dict:
         "current_eye": None,
         "current_phase": None,
         "verified_phases": [],
+        "skipped_phases": [],
+        "flags": {"mode": "audit", "phases": None, "approval": "interactive"},
         "failure_counts": {
             "rinnegan": 0, "byakugan": 0, "rasengan": 0, "sharingan": 0,
         },
@@ -184,6 +186,12 @@ def _is_legal_transition(old: str, new: str) -> bool:
         return True
     # Dynamic: BYAKUGAN_ACTIVE → RASENGAN_PHASE_N
     if old == "BYAKUGAN_ACTIVE" and new.startswith("RASENGAN_PHASE_"):
+        return True
+    # AUDIT_COMPLETE can transition to RASENGAN if user later adds --fix
+    if old == "AUDIT_COMPLETE" and new.startswith("RASENGAN_PHASE_"):
+        return True
+    # AUDIT_COMPLETE can re-enter itself
+    if old == "AUDIT_COMPLETE" and new == "AUDIT_COMPLETE":
         return True
     return False
 
