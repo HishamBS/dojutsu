@@ -1,12 +1,13 @@
 # Dojutsu
 
+> [!TIP]
+> **Using a coding agent?** Give it the [`AGENTS.md`](AGENTS.md) file and it handles everything -- install, configure, and run dojutsu on your project. No manual steps needed.
+
 ## What is Dojutsu?
 
 Dojutsu is a toolkit that automatically finds problems in your code, analyzes how serious they are, fixes them, and verifies the fixes are correct. You install it once, type one command, and it does the rest. No manual code review, no spreadsheets of issues, no guessing about what to fix first.
 
 Think of it as hiring a team of specialists who work around the clock: one finds every problem, one figures out the dependencies and priorities, one applies the fixes, and one double-checks that nothing broke. Dojutsu coordinates all of them so you do not have to.
-
-> **Setting up with a coding agent?** Give your agent the [AGENTS.md](AGENTS.md) file -- it has everything it needs to install, configure, and run dojutsu on your project.
 
 ---
 
@@ -115,8 +116,6 @@ bash setup.sh
 8. **Verifies symlinks.** It confirms every skill symlink resolves correctly and is readable by your agent.
 
 After the installer finishes, **restart your coding agent** (close and reopen it) so it picks up the new skills.
-
-**Want your coding agent to handle setup for you?** Give it the [AGENTS.md](AGENTS.md) file -- it contains step-by-step instructions any coding agent can follow to install, configure, and run dojutsu on your project.
 
 ---
 
