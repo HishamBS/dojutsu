@@ -114,6 +114,8 @@ bash setup.sh
 
 After the installer finishes, **restart your coding agent** (close and reopen it) so it picks up the new skills.
 
+**Want your coding agent to handle setup for you?** Give it the [AGENTS.md](AGENTS.md) file -- it contains step-by-step instructions any coding agent can follow to install, configure, and run dojutsu on your project.
+
 ---
 
 ## Usage
