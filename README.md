@@ -6,6 +6,8 @@ Dojutsu is a toolkit that automatically finds problems in your code, analyzes ho
 
 Think of it as hiring a team of specialists who work around the clock: one finds every problem, one figures out the dependencies and priorities, one applies the fixes, and one double-checks that nothing broke. Dojutsu coordinates all of them so you do not have to.
 
+> **Setting up with a coding agent?** Give your agent the [AGENTS.md](AGENTS.md) file -- it has everything it needs to install, configure, and run dojutsu on your project.
+
 ---
 
 ## What Does It Do?
