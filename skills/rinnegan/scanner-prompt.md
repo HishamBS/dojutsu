@@ -56,6 +56,31 @@ If the project defines custom rules, they are appended here:
 [CUSTOM_RULES]
 ```
 
+## SKIP Criteria (check BEFORE emitting)
+
+Before emitting ANY finding, check the applicable SKIP criteria below. If a finding matches SKIP, do NOT emit it.
+
+| Rule | SKIP Condition | Reason |
+|------|---------------|--------|
+| R04 | Component < 20 LOC without memo | Overhead exceeds benefit (R04-S1) |
+| R04 | useCallback/useMemo on non-memoized child | No downstream benefit |
+| R11 | Re-export barrel file (index.ts with only exports) | No logic to document (R11-S1) |
+| R11 | Type/interface-only export | Types are self-documenting (R11-S2) |
+| R13 | 0, 1, -1, 2 in boolean/trivial context | Universal constants (R13-S1) |
+| R13 | CSS pixel values in test files | Test-specific, not production code |
+| R09 | console.error in catch block of API route handler | Intentional error logging |
+
+If unsure whether SKIP applies, check the rule's precision criteria in rules-reference.md.
+
+## Context Gathering (required for R04, R09, R11, R13)
+
+Before assigning confidence to these rules, gather context:
+
+- **R04**: Count the component's LOC. Check if it's rendered inside a .map() or .forEach() loop. Check parent for React.memo.
+- **R09**: Check the file's layer (api-routes vs components). console.error in API routes may be intentional.
+- **R11**: Count the function's parameters. Check if it's exported. Check if it has JSDoc already.
+- **R13**: Check if the number is a well-known constant (port, HTTP status code, year). Check if it's in a config file.
+
 ## Instructions
 
 Follow this procedure exactly. Do not deviate.
@@ -86,7 +111,7 @@ For each file you successfully read:
 1. Walk through the file top-to-bottom.
 2. For EACH rule in the rules section, check whether any line or pattern violates it.
 3. When you find a violation, emit a finding immediately (do not batch them for later).
-4. Apply ALL rules, not just the ones that "seem relevant." A config file can have security violations. A route file can have typing violations.
+4. Apply ALL rules as detection patterns. However, filter your emissions by the SKIP criteria above and by confidence thresholds. Detection is broad; emission is selective. A config file can have security violations. A route file can have typing violations.
 
 ### Step 3: Emit Findings as JSONL
 
@@ -102,7 +127,7 @@ For EACH violation, emit exactly one JSON object on its own line. Use this forma
 |-------|------|-------------|
 | `rule` | string | Engineering rule ID: R01, R02, ..., R20 |
 | `severity` | enum | CRITICAL / HIGH / MEDIUM / LOW / REVIEW |
-| `category` | string | Category slug from prefix mapping (security, typing, ssot-dry, architecture, clean-code, performance, data-integrity, refactoring, full-stack, documentation, build) |
+| `category` | string | Category slug from prefix mapping. Category MUST be exactly one of: security, typing, ssot-dry, architecture, clean-code, performance, data-integrity, refactoring, full-stack, documentation, build. Any other value will be REJECTED by the validation pipeline. |
 | `file` | string | Relative path from project root |
 | `line` | int | Exact start line number of the violation |
 | `snippet` | string | Actual violating code, 3-5 lines, copied verbatim from the file. Minimum 40 characters. If the violation code is shorter, include 1-2 surrounding lines to meet the minimum. |
@@ -281,6 +306,12 @@ Field definitions:
 - If X + Z < Y, do NOT emit SCAN_COMPLETE. List the missing files and explain why.
 
 This signal tells the controller that your scan is finished and your output is ready for aggregation.
+
+## Density Self-Check
+
+Before emitting your completion signal, check:
+- If any single rule produces > 60% of your total findings, you are likely over-reporting. Re-evaluate those findings for SKIP criteria.
+- If total density is > 20 findings/KLOC, check for low-value findings that should be SKIP'd.
 
 ## Zero-Finding Gate
 

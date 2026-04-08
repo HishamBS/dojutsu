@@ -173,8 +173,31 @@ if state == "NEEDS_SCANNING":
         print(f"  FILES: {' '.join(b['files'])}")
 
 elif state == "NEEDS_AGGREGATION":
-    # Pre-aggregation: normalize ALL scanner output files (fixes LLM category drift)
+    # Pre-aggregation: validate scanner output, then normalize
     scanner_files = glob.glob(os.path.join(audit_dir, "data/scanner-output/*.jsonl"))
+
+    # Step 1: validate scanner output (rejects invalid findings before normalization)
+    try:
+        from validate_scanner_output import validate_scanner_file, load_inventory_files
+        inv_path = os.path.join(audit_dir, "data/inventory.json")
+        inv_files = load_inventory_files(inv_path) if os.path.isfile(inv_path) else None
+        total_valid = 0
+        total_rejected = 0
+        all_warnings: list[str] = []
+        for sf in scanner_files:
+            v, r, w = validate_scanner_file(sf, inv_files)
+            total_valid += v
+            total_rejected += r
+            all_warnings.extend(w)
+        print(f"AUTO: Scanner output validation: {total_valid} valid, {total_rejected} rejected.")
+        for w in all_warnings:
+            print(f"  WARNING: {w}")
+        if total_rejected > 0:
+            print(f"  Rejected findings written to *.rejected files in scanner-output/")
+    except ImportError:
+        pass
+
+    # Step 2: normalize ALL scanner output files (fixes LLM category drift)
     try:
         from normalize_categories import normalize_findings_file
         for sf in scanner_files:
