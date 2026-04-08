@@ -8,11 +8,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from normalize_categories import (
     CANONICAL_CATEGORIES,
+    REQUIRED_FIELDS,
     VALID_SEVERITIES,
     normalize_category,
 )
-
-REQUIRED_FIELDS = ("rule", "file", "line", "description")
 DENSITY_RULE_THRESHOLD = 0.60  # warn if any single rule exceeds 60% of findings
 
 
