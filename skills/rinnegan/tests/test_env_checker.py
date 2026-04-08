@@ -89,7 +89,7 @@ class TestCheckEnvExampleExists:
         assert len(findings) == 1
         assert findings[0]["rule"] == "R12"
         assert findings[0]["severity"] == "MEDIUM"
-        assert findings[0]["category"] == "real-data"
+        assert findings[0]["category"] == "data-integrity"
 
     def test_env_ignored_example_exists_emits_nothing(
         self, tmp_path: pytest.TempPathFactory,

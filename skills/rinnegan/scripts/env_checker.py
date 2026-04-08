@@ -99,7 +99,7 @@ def _check_env_example_exists(project_dir: str) -> Iterator[dict[str, str | int 
     yield _make_env_finding(
         rule="R12",
         severity="MEDIUM",
-        category="real-data",
+        category="data-integrity",
         file=".gitignore",
         line=1,
         description=(
@@ -127,7 +127,7 @@ def _check_env_var_consistency(
         yield _make_env_finding(
             rule="R12",
             severity="LOW",
-            category="real-data",
+            category="data-integrity",
             file=".env.example",
             line=1,
             description=(
