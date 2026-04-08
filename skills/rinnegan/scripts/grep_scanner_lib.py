@@ -74,10 +74,11 @@ TYPESCRIPT_PATTERNS: list[PatternDef] = [
      "description": "console.log in production code", "phase": 5, "removable": True,
      "explanation": "Console.log statements leak debug information to browser devtools in production. They clutter the console, may expose sensitive data, and indicate incomplete cleanup after development. Remove or replace with a proper logging service.",
      "confidence": "medium", "confidence_reason": "Debug logging left in code (R09-M1)"},
-    {"pattern": r"console\.error\(", "rule": "R09", "severity": "MEDIUM", "category": "clean-code",
+    {"pattern": r"console\.error\(", "rule": "R09", "severity": "LOW", "category": "clean-code",
      "description": "console.error in production code", "phase": 5, "removable": True,
-     "explanation": "Console.error should be replaced with structured error reporting (e.g., Sentry, LogRocket). Raw console output is not monitored in production and errors go unnoticed.",
-     "confidence": "low", "confidence_reason": "Error logging may be intentional (R09-L1)"},
+     "explanation": "Console.error should be replaced with structured error reporting in UI components. In server-side routes, console.error may be intentional logging.",
+     "confidence": "low", "confidence_reason": "Error logging may be intentional (R09-L1)",
+     "layer_exclude": ["api-routes", "routes", "services", "handlers"]},
     {"pattern": r"console\.warn\(", "rule": "R09", "severity": "MEDIUM", "category": "clean-code",
      "description": "console.warn in production code", "phase": 5, "removable": True,
      "explanation": "Console.warn clutters production output. Replace with a structured logging service that can be monitored and filtered.",
@@ -151,7 +152,7 @@ TYPESCRIPT_PATTERNS: list[PatternDef] = [
      "explanation": "Setting verify=False disables SSL certificate checking. An attacker can intercept all data between your application and the server. Always validate certificates in production.",
      "confidence": "high", "confidence_reason": "TLS validation disabled (R05)"},
     # --- NEW: R13 patterns (magic numbers, inline styles) ---
-    {"pattern": r"style=\{\{", "rule": "R13", "severity": "MEDIUM", "category": "clean-code",
+    {"pattern": r"style=\{\{", "rule": "R13", "severity": "LOW", "category": "clean-code",
      "description": "Inline style object in JSX creates new object each render", "phase": 5,
      "explanation": "Inline style objects like style={{color: 'red'}} create a new object on every render, defeating React.memo and causing unnecessary re-renders. Extract to a constant, useMemo, or CSS/styled-components.",
      "confidence": "medium", "confidence_reason": "Inline style object literal (R13-M1)"},
@@ -172,14 +173,8 @@ TYPESCRIPT_PATTERNS: list[PatternDef] = [
      "explanation": "Hardcoded numbers in JSX props (e.g., maxLength={50}, timeout={3000}) are magic numbers. Extract to named constants that explain the intent and can be tuned from one location.",
      "confidence": "medium", "confidence_reason": "Magic number in JSX prop (R13-M1)"},
     # --- NEW: R04 patterns (performance) ---
-    {"pattern": r"useEffect\(\s*\(\)\s*=>\s*\{", "rule": "R04", "severity": "MEDIUM", "category": "performance",
-     "description": "useEffect callback may be missing dependency array", "phase": 4,
-     "explanation": "useEffect without a dependency array runs on every render, often causing performance issues or infinite loops. Always provide a dependency array, even if empty [], to declare when the effect should re-run.",
-     "confidence": "medium", "confidence_reason": "Possible missing dependency array (R04-M1)"},
-    {"pattern": r"on\w+=\{\(\)\s*=>", "rule": "R04", "severity": "LOW", "category": "performance",
-     "description": "Inline arrow function in JSX event handler creates new ref each render", "phase": 5,
-     "explanation": "Inline arrow functions in JSX props create a new function reference on every render, breaking React.memo and PureComponent optimizations. Use useCallback to memoize the handler.",
-     "confidence": "medium", "confidence_reason": "Inline handler allocation (R04-M1)"},
+    # useEffect deps and inline handlers REMOVED — ESLint react-hooks/exhaustive-deps catches these
+    # with 0% false positives. Grep regex cannot distinguish missing deps from present deps.
     {"pattern": r"JSON\.parse\(JSON\.stringify\(", "rule": "R04", "severity": "MEDIUM", "category": "performance",
      "description": "JSON.parse(JSON.stringify()) deep clone loses types and is slow", "phase": 4,
      "explanation": "JSON round-tripping for deep clone silently drops undefined values, functions, Dates, RegExps, Maps, Sets, and circular references. Use structuredClone() (modern JS) or a library like lodash.cloneDeep for correct deep copying.",
@@ -409,15 +404,12 @@ JAVA_PATTERNS: list[PatternDef] = [
      "description": "Hardcoded URL with port number", "phase": 7,
      "explanation": "Hardcoded URLs with ports will fail when services move or ports change across environments. Use configuration properties or environment variables.",
      "confidence": "medium", "confidence_reason": "Hardcoded URL with port (R13-M1)"},
-    {"pattern": r"==\s*null\b", "rule": "R07", "severity": "LOW", "category": "typing",
-     "description": "== null check instead of Objects.isNull or Optional", "phase": 5,
-     "explanation": "Direct null comparisons are error-prone and verbose. Use Objects.isNull() for predicate references or Optional<T> to represent nullable values explicitly.",
-     "confidence": "high", "confidence_reason": "Direct null comparison (R07)"},
+    # == null REMOVED — idiomatic Java; Objects.isNull() is not more correct, just style preference
     # --- NEW: R13 patterns (magic numbers) ---
-    {"pattern": r"\b\d{4,}\b", "rule": "R13", "severity": "LOW", "category": "clean-code",
-     "description": "Magic number in code", "phase": 5,
-     "explanation": "Hardcoded numeric literals make code harder to understand and maintain. Extract magic numbers into named constants that convey intent and can be updated in one place.",
-     "confidence": "medium", "confidence_reason": "Hardcoded numeric literal (R13-M1)"},
+    {"pattern": r"\b\d{6,}\b", "rule": "R13", "severity": "LOW", "category": "clean-code",
+     "description": "Large magic number in code (6+ digits)", "phase": 5,
+     "explanation": "Large hardcoded numeric literals make code harder to understand. Extract into named constants that convey intent.",
+     "confidence": "medium", "confidence_reason": "Large hardcoded numeric literal (R13-M1)"},
     {"pattern": r"Thread\.sleep\(\s*\d+", "rule": "R13", "severity": "MEDIUM", "category": "clean-code",
      "description": "Thread.sleep with hardcoded duration", "phase": 5,
      "explanation": "Hardcoded sleep durations are magic numbers. Extract to a named constant (e.g., RETRY_DELAY_MS) so the purpose is clear and the value can be tuned in one place.",
@@ -966,6 +958,13 @@ def scan_project(
 
             if _should_skip(rel_path):
                 continue
+
+            # Layer-based exclusion (e.g., skip console.error in API routes)
+            layer_exclude = pat_def.get("layer_exclude")
+            if layer_exclude:
+                file_layer = file_to_layer.get(rel_path, "misc")
+                if file_layer in layer_exclude:
+                    continue
 
             code_stripped = code.strip()
             if pat_def["rule"] in COMMENT_FILTER_RULES and _is_comment(code_stripped):
