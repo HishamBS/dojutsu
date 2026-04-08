@@ -227,12 +227,10 @@ else:
     print(f"  Verifier: {verifier_summary}")
     print(f"  Runtime: {len(runtime_results)} checks, {runtime_failures} failures")
 
-with open(verdict_file, 'w') as f:
-    json.dump(verdict, f, indent=2)
-
 # ── HMAC Verdict Integrity ──
 # Sign the verdict so enforce.sh can detect forgery.
 # Key is project-scoped and stable across script updates.
+# Compute HMAC BEFORE writing to avoid corrupt partial-write state.
 keyfile = Path.home() / ".config" / "spsm" / ".hmac-key"
 if keyfile.exists():
     hmac_key = keyfile.read_bytes().strip()
@@ -241,8 +239,13 @@ else:
 sign_payload = json.dumps(verdict.get('gates', {}), sort_keys=True) + "|" + verdict.get('timestamp', '')
 signature = hmac_mod.new(hmac_key, sign_payload.encode(), hashlib.sha256).hexdigest()
 verdict['hmac'] = signature
-with open(verdict_file, 'w') as f:
+
+# Atomic write: temp file + rename to prevent corrupt verdict on crash
+import tempfile as _tmpmod
+_tmp_fd, _tmp_path = _tmpmod.mkstemp(dir=os.path.dirname(verdict_file), suffix='.json')
+with os.fdopen(_tmp_fd, 'w') as f:
     json.dump(verdict, f, indent=2)
+os.replace(_tmp_path, verdict_file)
 print("  HMAC signature added to verdict.")
 
 print(f"\nVerdict written to: {verdict_file}")

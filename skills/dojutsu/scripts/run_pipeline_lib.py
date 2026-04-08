@@ -63,16 +63,23 @@ def _revalidate_remaining_tasks(project_dir: str, changed_only: bool = True) -> 
     if changed_only:
         args.append("--changed-only")
     result = subprocess.run(args, capture_output=True, text=True, cwd=project_dir)
+    prefix = get_progress_prefix()
+    if result.returncode != 0:
+        print(f"{prefix} WARNING: Task revalidation failed (exit {result.returncode})", flush=True)
+        if result.stderr.strip():
+            print(f"{prefix}   {result.stderr.strip()[:200]}", flush=True)
+        return
     if result.stdout.strip():
-        prefix = get_progress_prefix()
         for line in result.stdout.strip().split("\n"):
             print(f"{prefix} {line}")
 
 
 MAX_FAILURES_PER_EYE = 2
 MAX_ESCALATED_FAILURES = 2
-RATE_LIMIT_KEYWORDS = ["rate limit", "limit exceeded", "too many requests", "429", "quota",
-                       "hit your limit", "resets"]
+RATE_LIMIT_KEYWORDS = ["rate limit", "rate_limit", "rate-limit", "limit exceeded",
+                       "too many requests", "429", "quota exceeded", "quota",
+                       "hit your limit", "resets", "throttl", "retry-after",
+                       "temporarily unavailable", "overloaded"]
 
 _DEFAULT_FLAGS = {
     "mode": "audit",
@@ -539,11 +546,6 @@ def run_pipeline(project_dir: str, flags: dict | None = None) -> int:
 
     # If stage changed, transition
     if detected != state["stage"]:
-        # For phase transitions, record the start checkpoint
-        if detected.startswith("RASENGAN_PHASE_"):
-            phase = detected.rsplit("_", 1)[1]
-            state["git_checkpoints"][f"phase-{phase}-start"] = get_head_sha(project_dir)
-
         # For sharingan verification, check if phase was just verified
         if (
             state["stage"].startswith("SHARINGAN_PHASE_")
@@ -568,6 +570,12 @@ def run_pipeline(project_dir: str, flags: dict | None = None) -> int:
         except ValueError as e:
             print(f"ERROR: {e}")
             return 1
+
+        # Record phase start checkpoint AFTER successful transition
+        if detected.startswith("RASENGAN_PHASE_"):
+            phase = detected.rsplit("_", 1)[1]
+            state["git_checkpoints"][f"phase-{phase}-start"] = get_head_sha(project_dir)
+            save_state(project_dir, state)
 
     # Route to appropriate handler
     if detected == "RINNEGAN_ACTIVE":
