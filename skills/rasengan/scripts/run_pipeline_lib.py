@@ -389,10 +389,17 @@ def run_pipeline(project_dir: str, out: TextIO | None = None) -> int:
 
     # Load human decisions for LOW findings
     decisions_path = os.path.join(audit_dir, "data", "human-decisions.json")
-    human_decisions: dict = {}
+    human_decisions: dict[str, dict[str, str]] = {}
     if os.path.exists(decisions_path):
-        with open(decisions_path) as df:
-            human_decisions = json.load(df)
+        try:
+            with open(decisions_path) as df:
+                loaded = json.load(df)
+            if isinstance(loaded, dict):
+                human_decisions = loaded
+            else:
+                out.write(f"  WARNING: human-decisions.json is not a dict. Ignoring.\n")
+        except (json.JSONDecodeError, OSError) as exc:
+            out.write(f"  WARNING: Failed to parse human-decisions.json ({exc}). Ignoring.\n")
 
     # Apply existing bulk decisions to LOW findings
     bulk_rules = human_decisions.get("bulk_rules", {})
@@ -490,7 +497,12 @@ def run_pipeline(project_dir: str, out: TextIO | None = None) -> int:
 
     # Output next task — but verify it's still valid first
     next_task = pending[0]
-    task_index = tasks.index(next_task)
+    try:
+        task_index = tasks.index(next_task)
+    except ValueError:
+        out.write(f"ERROR: Task {next_task.get('id', '?')} not found in phase tasks. "
+                  "Revalidation may have removed it. Run script again.\n")
+        return 1
 
     # Per-task revalidation: check current_code still exists at cited line
     try:
@@ -513,8 +525,10 @@ def run_pipeline(project_dir: str, out: TextIO | None = None) -> int:
                 out.write(f"  TASK_SKIPPED: {next_task.get('id','?')} — code no longer present (fixed by earlier phase)\n")
                 out.write(f"  Run this script again for the next task.\n")
                 return 0
-    except Exception:
-        pass  # Revalidation not available — proceed with task
+    except ImportError:
+        pass  # Revalidation script not installed — proceed with task as-is
+    except Exception as exc:
+        out.write(f"  WARNING: Task revalidation failed ({exc}). Proceeding with unvalidated task.\n")
 
     log_dispatch(project_dir, task=f"fix_{next_task.get('id', '?')}", tokens=5000, model="sonnet")
 
