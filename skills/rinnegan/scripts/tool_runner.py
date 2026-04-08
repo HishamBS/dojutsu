@@ -754,7 +754,12 @@ def _run_pip_audit(project_dir: str, stack: str) -> Iterator[dict[str, str | int
             vuln_id = vuln.get("id", "")
             desc = vuln.get("description", f"Vulnerability in {pkg}")[:200]
             fix_vers = vuln.get("fix_versions", [])
-            severity = "HIGH" if "critical" in desc.lower() else "MEDIUM"
+            # Use official severity from pip-audit if available, else infer
+            raw_sev = (vuln.get("severity") or "").upper()
+            if raw_sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+                severity = raw_sev
+            else:
+                severity = "HIGH" if "critical" in desc.lower() else "MEDIUM"
             yield _make_finding(
                 rule="R05", severity=severity, category="security",
                 file="requirements.txt", line=1,

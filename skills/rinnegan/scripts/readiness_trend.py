@@ -77,13 +77,19 @@ def get_trend(audit_dir: str) -> TrendInfo | None:
             line = line.strip()
             if not line:
                 continue
-            entries.append(json.loads(line))
+            try:
+                entry = json.loads(line)
+                if "score" not in entry:
+                    continue
+                entries.append(entry)
+            except json.JSONDecodeError:
+                continue  # skip corrupted lines
 
     if len(entries) < 2:
         return None
 
-    current = entries[-1]["score"]
-    previous = entries[-2]["score"]
+    current: float = entries[-1]["score"]
+    previous: float = entries[-2]["score"]
     delta = round(current - previous, 2)
 
     if delta > 0:

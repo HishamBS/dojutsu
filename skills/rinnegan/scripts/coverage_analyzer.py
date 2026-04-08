@@ -123,7 +123,7 @@ def _parse_coverage_py(project_dir: str) -> list[dict[str, str | int | list[str]
             summary: dict[str, Any] = fn_data.get("summary", {})
             percent_covered: float = summary.get("percent_covered", 100.0)
 
-            if percent_covered == 0.0:
+            if percent_covered < 0.01:  # tolerance for floating-point
                 fn_line: int = fn_data.get("line", 1)
                 findings.append(_make_coverage_finding(
                     file=rel_path,

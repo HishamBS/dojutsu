@@ -139,8 +139,8 @@ class TestReadinessScore:
     def test_small_codebase_avoids_division_by_zero(self) -> None:
         findings = [_make_finding(severity="MEDIUM")]
         score = _compute_readiness_score(findings, total_loc=0)
-        # KLOC = max(0/1000, 0.1) = 0.1; 1.0 / 0.1 = 10; 100 - 10 = 90
-        assert score == 90.0
+        # KLOC = max(0/1000, 1.0) = 1.0; 1.0 / 1.0 = 1; 100 - 1 = 99
+        assert score == 99.0
 
 
 # -- Tier Evaluation -----------------------------------------------------------

@@ -124,7 +124,14 @@ def load_inventory_files(inventory_path: str) -> set[str]:
     """Load the set of known file paths from inventory.json."""
     with open(inventory_path) as f:
         inv = json.load(f)
-    return set(inv.get("files", {}).keys())
+    files = inv.get("files", [])
+    # inventory.json stores files as list of dicts with "path" key
+    if isinstance(files, list):
+        return {f["path"] for f in files if isinstance(f, dict) and "path" in f}
+    # fallback: dict with path keys
+    if isinstance(files, dict):
+        return set(files.keys())
+    return set()
 
 
 if __name__ == "__main__":

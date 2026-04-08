@@ -13,13 +13,14 @@ from typing import Iterator
 
 # Patterns that extract environment variable names from source code
 _ENV_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"process\.env\.([A-Z_][A-Z0-9_]*)"),
-    re.compile(r'os\.environ\["([A-Z_][A-Z0-9_]*)"\]'),
-    re.compile(r"os\.environ\['([A-Z_][A-Z0-9_]*)'\]"),
-    re.compile(r'os\.getenv\("([A-Z_][A-Z0-9_]*)"'),
-    re.compile(r"os\.getenv\('([A-Z_][A-Z0-9_]*)'"),
-    re.compile(r'os\.environ\.get\("([A-Z_][A-Z0-9_]*)"'),
-    re.compile(r"os\.environ\.get\('([A-Z_][A-Z0-9_]*)'"),
+    # Match both UPPER_CASE and camelCase env vars (e.g., process.env.API_KEY, process.env.apiUrl)
+    re.compile(r"process\.env\.([A-Za-z_][A-Za-z0-9_]*)"),
+    re.compile(r'os\.environ\["([A-Za-z_][A-Za-z0-9_]*)"\]'),
+    re.compile(r"os\.environ\['([A-Za-z_][A-Za-z0-9_]*)'\]"),
+    re.compile(r'os\.getenv\("([A-Za-z_][A-Za-z0-9_]*)"'),
+    re.compile(r"os\.getenv\('([A-Za-z_][A-Za-z0-9_]*)'"),
+    re.compile(r'os\.environ\.get\("([A-Za-z_][A-Za-z0-9_]*)"'),
+    re.compile(r"os\.environ\.get\('([A-Za-z_][A-Za-z0-9_]*)'"),
 ]
 
 # Files to check for committed env secrets
@@ -202,7 +203,8 @@ def _scan_source_for_env_vars(project_dir: str) -> set[str]:
         # Skip common non-source directories
         dirnames[:] = [
             d for d in dirnames
-            if d not in {"node_modules", ".git", "__pycache__", "venv", ".venv", "dist", "build"}
+            if d not in {"node_modules", ".git", "__pycache__", "venv", ".venv", "dist", "build",
+                        ".next", ".turbo", "coverage", ".cache", ".nyc_output", "target", ".gradle"}
         ]
         for filename in filenames:
             _, ext = os.path.splitext(filename)

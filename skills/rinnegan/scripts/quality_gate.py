@@ -126,7 +126,7 @@ def _compute_readiness_score(
     LOC is expressed in thousands (KLOC).  A project with zero findings
     scores 100.  The score is clamped to [0, 100].
     """
-    kloc = max(total_loc / 1000.0, 0.1)  # avoid division by zero
+    kloc = max(total_loc / 1000.0, 1.0)  # minimum 1 KLOC to avoid penalizing tiny projects
     weighted = 0.0
     for f in findings:
         sev = f.get("severity", "MEDIUM")
