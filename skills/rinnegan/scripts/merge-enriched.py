@@ -109,3 +109,18 @@ if enriched_count < original_count:
     print(f"WARNING: Lost {original_count - enriched_count} findings! Restoring backup.")
     shutil.copy2(f"{original}.bak", original)
     sys.exit(1)
+
+# Post-merge: normalize categories and detect cross-cutting groups (deterministic)
+try:
+    from normalize_categories import normalize_findings_file
+    norm_count = normalize_findings_file(original)
+    print(f"Normalized: {norm_count} findings to canonical categories")
+except ImportError:
+    print("WARNING: normalize_categories.py not found. Skipping category normalization.")
+
+try:
+    from detect_cross_cutting import apply_cross_cutting
+    group_count = apply_cross_cutting(original, min_files=3)
+    print(f"Cross-cutting: {group_count} groups detected")
+except ImportError:
+    print("WARNING: detect_cross_cutting.py not found. Skipping cross-cutting detection.")

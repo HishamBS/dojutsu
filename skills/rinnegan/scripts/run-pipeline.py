@@ -103,6 +103,29 @@ if state == "NEEDS_SCAN_PLAN":
     # Also run exhaustive grep scanner (deterministic, finds ALL mechanical violations)
     print("\nAUTO: Running exhaustive grep scanner...")
     run_script("grep-scanner.py", project_dir, audit_dir)
+    # Run deterministic tool scanner (ESLint, Ruff, mypy, Semgrep, Checkstyle, tsc)
+    tool_output = os.path.join(audit_dir, "data", "scanner-output", "tool-scanner.jsonl")
+    if not os.path.exists(tool_output):
+        try:
+            from tool_runner import detect_tools, run_tool
+            inv = json.load(open(os.path.join(audit_dir, "data/inventory.json")))
+            stack = inv.get("stack", "typescript")
+            tools = detect_tools(stack, project_dir)
+            if tools:
+                print(f"\nAUTO: Running deterministic tool scanners: {', '.join(tools)}")
+                all_findings: list[dict] = []
+                for tool in tools:
+                    findings = run_tool(tool, project_dir, stack)
+                    all_findings.extend(findings)
+                    print(f"  {tool}: {len(findings)} findings")
+                with open(tool_output, "w") as f:
+                    for finding in all_findings:
+                        f.write(json.dumps(finding) + "\n")
+                print(f"TOOL_SCAN_COMPLETE: {len(all_findings)} findings from {len(tools)} tools")
+            else:
+                print("\nAUTO: No linting tools detected on PATH (eslint, ruff, mypy, semgrep). Skipping tool scan.")
+        except ImportError:
+            print("\nAUTO: tool_runner.py not found. Skipping tool scan.")
     state = get_state()
 
 # Output state + action
