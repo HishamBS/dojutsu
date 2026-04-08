@@ -23,6 +23,42 @@ LAYER_PATTERNS = {
     'tests': ['__tests__/', 'test/', 'spec/', '.test.', '.spec.'],
 }
 
+# Stack-specific layer patterns (applied when stack is detected)
+JAVA_LAYER_PATTERNS = {
+    'controllers': ['controller.java', '/controller/', '/controllers/', '/rest/', '/web/'],
+    'services': ['service.java', '/service/', '/services/'],
+    'repositories': ['repository.java', '/repository/', '/repositories/', '/dao/'],
+    'dto': ['/dto/', 'dto.java', 'request.java', 'response.java', 'requestdto.java', 'responsedto.java'],
+    'entities': ['/entity/', '/entities/', '/model/', '/domain/'],
+    'config': ['config.java', 'configuration.java', '/config/', '/configuration/'],
+    'mappers': ['mapper.java', '/mapper/', '/mappers/', '/converter/'],
+    'utils': ['/util/', '/utils/', '/helper/', '/common/'],
+    'tests': ['/test/', 'test.java', 'tests.java', '/it/', 'integrationtest'],
+}
+
+PYTHON_LAYER_PATTERNS = {
+    'routes': ['/routes/', '/endpoints/', '/views/', '/routers/'],
+    'services': ['/services/', '/service/'],
+    'models': ['/models/', '/schemas/', '/entities/'],
+    'utils': ['/utils/', '/helpers/', '/common/', '/shared/'],
+    'config': ['/config/', '/configs/', '/settings/', 'settings.py', 'config.py'],
+    'tests': ['/tests/', '/test/', 'test_', '_test.py', 'conftest.py'],
+    'middleware': ['/middleware/', '/middlewares/'],
+    'agents': ['/agents/', '/tools/', '/prompts/'],
+}
+
+GO_LAYER_PATTERNS = {
+    'cmd': ['/cmd/'],
+    'internal': ['/internal/'],
+    'pkg': ['/pkg/'],
+    'handlers': ['/handler/', '/handlers/'],
+    'services': ['/service/', '/services/'],
+    'models': ['/model/', '/models/'],
+    'middleware': ['/middleware/'],
+    'utils': ['/util/', '/utils/', '/pkg/util'],
+    'tests': ['_test.go'],
+}
+
 SKIP_DIRS = {'node_modules', '.next', '__pycache__', '.git', 'dist', 'build',
              '.venv', 'venv', '.turbo', '.cache', 'coverage', '.nyc_output'}
 
@@ -79,13 +115,25 @@ for root, dirs, filenames in os.walk(project_dir):
         except:
             loc = 0
 
-        # Classify layer
+        # Classify layer — try stack-specific patterns first, then generic
         layer = 'misc'
         rel_lower = rel_path.lower().replace('\\', '/')
-        for layer_name, patterns in LAYER_PATTERNS.items():
+        stack_patterns = {
+            'java': JAVA_LAYER_PATTERNS,
+            'python': PYTHON_LAYER_PATTERNS,
+            'go': GO_LAYER_PATTERNS,
+        }.get(stack, {})
+        # Stack-specific patterns take priority
+        for layer_name, patterns in stack_patterns.items():
             if any(p in rel_lower for p in patterns):
                 layer = layer_name
                 break
+        # Fall back to generic patterns if still misc
+        if layer == 'misc':
+            for layer_name, patterns in LAYER_PATTERNS.items():
+                if any(p in rel_lower for p in patterns):
+                    layer = layer_name
+                    break
 
         # Tag
         tag = 'SOURCE'
