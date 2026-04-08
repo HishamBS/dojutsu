@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
+from typing import Iterator
 
 import pytest
 
@@ -15,11 +17,13 @@ sys.path.insert(0, SCRIPTS_DIR)
 from tool_runner import (
     ESLINT_DEFAULT,
     ESLINT_RULE_MAP,
+    FINDING_REQUIRED_FIELDS,
     MYPY_DEFAULT,
     MYPY_RULE_MAP,
     RUFF_DEFAULT,
     RUFF_RULE_MAP,
     SEMGREP_SEVERITY_MAP,
+    ToolResult,
     _make_finding,
     _map_eslint_rule,
     _phase_from_rule,
@@ -27,8 +31,10 @@ from tool_runner import (
     _run_mypy,
     _run_ruff,
     _run_tsc,
+    _validate_finding,
     detect_tools,
     run_tool,
+    run_tool_safe,
 )
 
 
@@ -446,6 +452,157 @@ class TestRuleMaps:
     def test_semgrep_severity_map(self) -> None:
         for key, val in SEMGREP_SEVERITY_MAP.items():
             assert val in ("LOW", "MEDIUM", "HIGH", "CRITICAL")
+
+
+class TestToolResult:
+    """ToolResult dataclass creation and field defaults."""
+
+    def test_default_fields(self) -> None:
+        tr = ToolResult(tool="eslint", status="success")
+        assert tr.tool == "eslint"
+        assert tr.status == "success"
+        assert tr.findings == []
+        assert tr.duration_ms == 0
+        assert tr.error == ""
+        assert tr.finding_count == 0
+
+    def test_custom_fields(self) -> None:
+        findings = [{"rule": "R14", "file": "a.ts"}]
+        tr = ToolResult(
+            tool="ruff", status="failed",
+            findings=findings, duration_ms=1234,
+            error="parse error", finding_count=1,
+        )
+        assert tr.tool == "ruff"
+        assert tr.status == "failed"
+        assert tr.findings == findings
+        assert tr.duration_ms == 1234
+        assert tr.error == "parse error"
+        assert tr.finding_count == 1
+
+    def test_status_values(self) -> None:
+        for status in ("success", "skipped", "failed", "timeout"):
+            tr = ToolResult(tool="t", status=status)
+            assert tr.status == status
+
+    def test_findings_list_is_independent(self) -> None:
+        tr1 = ToolResult(tool="a", status="success")
+        tr2 = ToolResult(tool="b", status="success")
+        tr1.findings.append({"rule": "R01"})
+        assert tr2.findings == []
+
+
+class TestValidateFinding:
+    """_validate_finding checks required fields."""
+
+    def test_valid_finding(self) -> None:
+        f = _make_finding(
+            rule="R14", severity="HIGH", category="build",
+            file="a.ts", line=1, snippet="x", description="d",
+            scanner="s", confidence="high", confidence_reason="r",
+        )
+        assert _validate_finding(f) is True
+
+    def test_missing_field(self) -> None:
+        f = {"rule": "R14", "severity": "HIGH"}
+        assert _validate_finding(f) is False
+
+    def test_non_dict(self) -> None:
+        assert _validate_finding("not a dict") is False  # type: ignore[arg-type]
+        assert _validate_finding(None) is False  # type: ignore[arg-type]
+
+
+class TestRunToolSafe:
+    """run_tool_safe wraps run_tool with retry, timeout, and validation."""
+
+    def test_success_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        eslint_output = json.dumps([{
+            "filePath": "/project/src/app.tsx",
+            "messages": [{
+                "ruleId": "no-unused-vars",
+                "severity": 2,
+                "message": "Unused var.",
+                "line": 5, "column": 7, "endLine": 5, "endColumn": 8,
+            }],
+        }])
+        monkeypatch.setattr(
+            "tool_runner.subprocess.run",
+            lambda *a, **kw: _mock_result(stdout=eslint_output),
+        )
+        result = run_tool_safe("eslint", "/project", "typescript")
+        assert result.status == "success"
+        assert result.finding_count == 1
+        assert len(result.findings) == 1
+        assert result.duration_ms >= 0
+        assert result.error == ""
+
+    def test_unknown_tool_returns_skipped(self) -> None:
+        result = run_tool_safe("nonexistent_tool_xyz", "/project", "typescript")
+        assert result.status == "skipped"
+        assert result.finding_count == 0
+        assert "No runner registered" in result.error
+
+    def test_timeout_returns_timeout_status(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def _raise_timeout(*args: object, **kwargs: object) -> None:
+            raise subprocess.TimeoutExpired(cmd="eslint", timeout=120)
+        monkeypatch.setattr("tool_runner.subprocess.run", _raise_timeout)
+        result = run_tool_safe("eslint", "/project", "typescript")
+        assert result.status == "timeout"
+        assert result.finding_count == 0
+        assert "timed out" in result.error.lower()
+
+    def test_retry_on_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        call_count = 0
+
+        def _fail_then_succeed(project_dir: str, stack: str) -> Iterator[dict[str, str | int | list[str]]]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("transient failure")
+            return iter([])
+
+        monkeypatch.setattr("tool_runner._run_eslint", _fail_then_succeed)
+        # Reduce sleep time for test speed
+        monkeypatch.setattr("tool_runner.RETRY_SLEEP_SECONDS", 0)
+        result = run_tool_safe("eslint", "/project", "typescript")
+        assert result.status == "success"
+        assert call_count == 2
+
+    def test_failure_after_max_retries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def _always_fail(project_dir: str, stack: str) -> Iterator[dict[str, str | int | list[str]]]:
+            raise RuntimeError("permanent failure")
+
+        monkeypatch.setattr("tool_runner._run_ruff", _always_fail)
+        monkeypatch.setattr("tool_runner.RETRY_SLEEP_SECONDS", 0)
+        result = run_tool_safe("ruff", "/project", "python")
+        assert result.status == "failed"
+        assert "permanent failure" in result.error
+
+    def test_invalid_findings_filtered(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Findings missing required fields are filtered out."""
+        valid = _make_finding(
+            rule="R14", severity="HIGH", category="build",
+            file="a.ts", line=1, snippet="x", description="d",
+            scanner="eslint", confidence="high", confidence_reason="r",
+        )
+        invalid = {"rule": "R14"}  # missing required fields
+
+        def _mixed_findings(project_dir: str, stack: str) -> Iterator[dict[str, str | int | list[str]]]:
+            yield valid
+            yield invalid  # type: ignore[misc]
+
+        monkeypatch.setattr("tool_runner._run_eslint", _mixed_findings)
+        result = run_tool_safe("eslint", "/project", "typescript")
+        assert result.status == "success"
+        assert result.finding_count == 1
+
+    def test_duration_is_positive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "tool_runner.subprocess.run",
+            lambda *a, **kw: _mock_result(stdout=""),
+        )
+        result = run_tool_safe("eslint", "/project", "typescript")
+        assert result.duration_ms >= 0
 
 
 # ---------------------------------------------------------------------------

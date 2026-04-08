@@ -15,7 +15,7 @@ except ImportError:
     def log_dispatch(*a, **kw): pass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from run_pipeline_lib import generate_dag_and_config, validate_null_fix_coverage
+from run_pipeline_lib import generate_dag_and_config, evaluate_quality_gate_from_audit, validate_null_fix_coverage
 
 project_dir = sys.argv[1]
 audit_dir = os.path.join(project_dir, "docs", "audit")
@@ -107,21 +107,33 @@ if state == "NEEDS_SCAN_PLAN":
     tool_output = os.path.join(audit_dir, "data", "scanner-output", "tool-scanner.jsonl")
     if not os.path.exists(tool_output):
         try:
-            from tool_runner import detect_tools, run_tool
+            from tool_runner import detect_tools, run_tool_safe
+            from pipeline_health import write_health_report
             inv = json.load(open(os.path.join(audit_dir, "data/inventory.json")))
             stack = inv.get("stack", "typescript")
             tools = detect_tools(stack, project_dir)
             if tools:
                 print(f"\nAUTO: Running deterministic tool scanners: {', '.join(tools)}")
                 all_findings: list[dict] = []
+                tool_results = []
                 for tool in tools:
-                    findings = run_tool(tool, project_dir, stack)
-                    all_findings.extend(findings)
-                    print(f"  {tool}: {len(findings)} findings")
+                    result = run_tool_safe(tool, project_dir, stack)
+                    tool_results.append(result)
+                    all_findings.extend(result.findings)
+                    status_tag = result.status.upper()
+                    if result.error:
+                        print(f"  {tool}: [{status_tag}] {result.finding_count} findings ({result.duration_ms}ms) — {result.error}")
+                    else:
+                        print(f"  {tool}: [{status_tag}] {result.finding_count} findings ({result.duration_ms}ms)")
                 with open(tool_output, "w") as f:
                     for finding in all_findings:
                         f.write(json.dumps(finding) + "\n")
-                print(f"TOOL_SCAN_COMPLETE: {len(all_findings)} findings from {len(tools)} tools")
+                # Write health report
+                write_health_report(audit_dir, tool_results, project_dir)
+                # Print summary
+                succeeded = sum(1 for r in tool_results if r.status == "success")
+                total_ms = sum(r.duration_ms for r in tool_results)
+                print(f"Tool scan: {succeeded}/{len(tools)} succeeded, {len(all_findings)} findings, {total_ms} ms total")
             else:
                 print("\nAUTO: No linting tools detected on PATH (eslint, ruff, mypy, semgrep). Skipping tool scan.")
         except ImportError:
@@ -221,6 +233,13 @@ elif state == "NEEDS_PHASES":
     dag, rasengan_cfg = generate_dag_and_config(audit_dir, project_dir)
     print(f"\nAUTO: Wrote phase-dag.json ({len(dag['edges'])} edges, {len(dag['nodes'])} nodes)")
     print(f"AUTO: Wrote rasengan-config.json ({len(rasengan_cfg)} fields)")
+
+    # Quality gate evaluation (deterministic)
+    gate_result = evaluate_quality_gate_from_audit(audit_dir)
+    print(f"AUTO: Wrote quality-gate.json (readiness={gate_result['readiness_score']}%, verdict={gate_result['overall']})")
+    trend = gate_result.get("trend")
+    if trend:
+        print(f"  Trend: {trend['delta']:+.1f} ({trend['direction']} from {trend['previous']}%)")
 
     findings_count = count_lines("data/findings.jsonl")
     print(f"\nFINDINGS: {findings_count}")

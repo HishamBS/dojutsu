@@ -10,7 +10,9 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
 from typing import Iterator
 
 # Tool -> rule mapping. Each tool finding maps to an R01-R20 rule.
@@ -51,6 +53,114 @@ SEMGREP_SEVERITY_MAP: dict[str, str] = {
     "WARNING": "MEDIUM",
     "INFO": "LOW",
 }
+
+# Per-tool timeout defaults in seconds
+TOOL_TIMEOUT: dict[str, int] = {
+    "semgrep": 300,
+    "mypy": 180,
+    "checkstyle": 180,
+    "knip": 180,
+}
+DEFAULT_TOOL_TIMEOUT: int = 120
+
+# Required fields every finding dict must contain
+FINDING_REQUIRED_FIELDS: frozenset[str] = frozenset({
+    "rule", "severity", "category", "file", "line", "description", "scanner",
+})
+
+# Retry configuration
+RETRY_SLEEP_SECONDS: int = 3
+MAX_RETRIES: int = 1
+
+
+@dataclass
+class ToolResult:
+    """Structured result from running a single tool via run_tool_safe."""
+
+    tool: str
+    status: str  # "success" | "skipped" | "failed" | "timeout"
+    findings: list[dict[str, str | int | list[str]]] = field(default_factory=list)
+    duration_ms: int = 0
+    error: str = ""
+    finding_count: int = 0
+
+
+def _validate_finding(finding: dict[str, str | int | list[str]]) -> bool:
+    """Return True if a finding dict contains all required fields."""
+    if not isinstance(finding, dict):
+        return False
+    return FINDING_REQUIRED_FIELDS.issubset(finding.keys())
+
+
+def run_tool_safe(tool: str, project_dir: str, stack: str) -> ToolResult:
+    """Run a single tool with retry, timeout handling, and output validation.
+
+    Preferred over run_tool. Returns a ToolResult with structured status,
+    timing, and validated findings.
+    """
+    start_ns = time.monotonic_ns()
+
+    runners: dict[str, _RunnerFn] = _get_runners()
+    runner = runners.get(tool)
+    if not runner:
+        elapsed_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+        return ToolResult(
+            tool=tool, status="skipped", duration_ms=elapsed_ms,
+            error=f"No runner registered for tool '{tool}'",
+        )
+
+    last_error = ""
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            raw_findings = list(runner(project_dir, stack))
+            # Validate each finding
+            valid_findings: list[dict[str, str | int | list[str]]] = []
+            for f in raw_findings:
+                if _validate_finding(f):
+                    valid_findings.append(f)
+            elapsed_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+            return ToolResult(
+                tool=tool, status="success", findings=valid_findings,
+                duration_ms=elapsed_ms, finding_count=len(valid_findings),
+            )
+        except subprocess.TimeoutExpired as exc:
+            elapsed_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+            return ToolResult(
+                tool=tool, status="timeout", duration_ms=elapsed_ms,
+                error=f"Tool timed out after {getattr(exc, 'timeout', 'unknown')}s",
+            )
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_SLEEP_SECONDS)
+
+    elapsed_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+    return ToolResult(
+        tool=tool, status="failed", duration_ms=elapsed_ms, error=last_error,
+    )
+
+
+def _get_runners() -> dict[str, _RunnerFn]:
+    """Return the tool name -> runner function mapping."""
+    return {
+        "eslint": _run_eslint,
+        "tsc": _run_tsc,
+        "ruff": _run_ruff,
+        "mypy": _run_mypy,
+        "semgrep": _run_semgrep,
+        "checkstyle": _run_checkstyle,
+        "jscpd": _run_jscpd,
+        "knip": _run_knip,
+        "madge": _run_madge,
+        "radon": _run_radon,
+        "vulture": _run_vulture,
+        "npm-audit": _run_npm_audit,
+        "pip-audit": _run_pip_audit,
+        "gitleaks": _run_gitleaks,
+        "env-check": _run_env_check,
+        "coverage": _run_coverage,
+        "assertion-check": _run_assertion_check,
+    }
 
 
 def detect_tools(stack: str, project_dir: str) -> list[str]:
@@ -110,26 +220,12 @@ def detect_tools(stack: str, project_dir: str) -> list[str]:
 
 
 def run_tool(tool: str, project_dir: str, stack: str) -> list[dict[str, str | int | list[str]]]:
-    """Run a single tool and return normalized findings."""
-    runners: dict[str, _RunnerFn] = {
-        "eslint": _run_eslint,
-        "tsc": _run_tsc,
-        "ruff": _run_ruff,
-        "mypy": _run_mypy,
-        "semgrep": _run_semgrep,
-        "checkstyle": _run_checkstyle,
-        "jscpd": _run_jscpd,
-        "knip": _run_knip,
-        "madge": _run_madge,
-        "radon": _run_radon,
-        "vulture": _run_vulture,
-        "npm-audit": _run_npm_audit,
-        "pip-audit": _run_pip_audit,
-        "gitleaks": _run_gitleaks,
-        "env-check": _run_env_check,
-        "coverage": _run_coverage,
-        "assertion-check": _run_assertion_check,
-    }
+    """Run a single tool and return normalized findings.
+
+    Kept for backward compatibility. Prefer run_tool_safe for structured
+    error handling, retry logic, and timing information.
+    """
+    runners = _get_runners()
     runner = runners.get(tool)
     if not runner:
         return []
