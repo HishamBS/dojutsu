@@ -55,20 +55,30 @@ SEMGREP_SEVERITY_MAP: dict[str, str] = {
 def detect_tools(stack: str, project_dir: str) -> list[str]:
     """Detect which linting tools are available for this stack."""
     available: list[str] = []
+    # Core linters (per-stack)
     checks: dict[str, list[tuple[str, list[str]]]] = {
         "typescript": [
             ("eslint", ["npx", "eslint", "--version"]),
             ("tsc", ["npx", "tsc", "--version"]),
             ("semgrep", ["semgrep", "--version"]),
+            ("jscpd", ["npx", "jscpd", "--version"]),
+            ("knip", ["npx", "knip", "--version"]),
+            ("madge", ["npx", "madge", "--version"]),
+            ("npm-audit", ["npm", "audit", "--version"]),
         ],
         "python": [
             ("ruff", ["ruff", "--version"]),
             ("mypy", ["mypy", "--version"]),
             ("semgrep", ["semgrep", "--version"]),
+            ("jscpd", ["npx", "jscpd", "--version"]),
+            ("radon", ["radon", "--version"]),
+            ("vulture", ["vulture", "--version"]),
+            ("pip-audit", ["pip-audit", "--version"]),
         ],
         "java": [
             ("checkstyle", _checkstyle_version_cmd(project_dir)),
             ("semgrep", ["semgrep", "--version"]),
+            ("jscpd", ["npx", "jscpd", "--version"]),
         ],
     }
     for tool_name, cmd in checks.get(stack, []):
@@ -91,6 +101,13 @@ def run_tool(tool: str, project_dir: str, stack: str) -> list[dict[str, str | in
         "mypy": _run_mypy,
         "semgrep": _run_semgrep,
         "checkstyle": _run_checkstyle,
+        "jscpd": _run_jscpd,
+        "knip": _run_knip,
+        "madge": _run_madge,
+        "radon": _run_radon,
+        "vulture": _run_vulture,
+        "npm-audit": _run_npm_audit,
+        "pip-audit": _run_pip_audit,
     }
     runner = runners.get(tool)
     if not runner:
@@ -327,6 +344,243 @@ def _make_finding(
         "tool_rule_id": tool_rule_id,
         "cwe": cwe or [],
     }
+
+
+def _run_jscpd(project_dir: str, stack: str) -> Iterator[dict[str, str | int | list[str]]]:
+    """Detect code duplication (R01 SSOT/DRY)."""
+    import tempfile
+    src = "src/" if os.path.isdir(os.path.join(project_dir, "src")) else "."
+    with tempfile.TemporaryDirectory() as tmpdir:
+        subprocess.run(
+            ["npx", "jscpd", src, "--reporters", "json", "--min-tokens", "50",
+             "--min-lines", "5", "--output", tmpdir],
+            capture_output=True, text=True, cwd=project_dir, timeout=120,
+        )
+        report_file = os.path.join(tmpdir, "jscpd-report.json")
+        if not os.path.isfile(report_file):
+            return
+        with open(report_file) as f:
+            try:
+                data = json.load(f)
+            except json.JSONDecodeError:
+                return
+    for dup in data.get("duplicates", []):
+        first = dup.get("firstFile", {})
+        second = dup.get("secondFile", {})
+        lines = dup.get("lines", 0)
+        yield _make_finding(
+            rule="R01", severity="MEDIUM" if lines > 20 else "LOW",
+            category="ssot-dry",
+            file=first.get("name", ""),
+            line=first.get("start", 0),
+            snippet=f"{lines} duplicated lines also in {second.get('name', '')}:{second.get('start', 0)}",
+            description=f"Code duplication: {lines} lines duplicated between {first.get('name', '')} and {second.get('name', '')}",
+            scanner="jscpd", confidence="high",
+            confidence_reason=f"Deterministic: jscpd token-based clone detection ({lines} lines)",
+        )
+
+
+def _run_knip(project_dir: str, stack: str) -> Iterator[dict[str, str | int | list[str]]]:
+    """Detect dead code: unused files, exports, dependencies (R09/R14)."""
+    result = subprocess.run(
+        ["npx", "knip", "--reporter", "json", "--no-progress"],
+        capture_output=True, text=True, cwd=project_dir, timeout=180,
+    )
+    if not result.stdout.strip():
+        return
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return
+    for unused_file in data.get("files", []):
+        yield _make_finding(
+            rule="R09", severity="MEDIUM", category="clean-code",
+            file=unused_file, line=1,
+            snippet="Entire file is unused (not imported anywhere)",
+            description=f"Unused file: {unused_file} is not imported by any other file in the project",
+            scanner="knip", confidence="high",
+            confidence_reason="Deterministic: knip project-wide import analysis",
+        )
+    for export_info in data.get("exports", []):
+        if isinstance(export_info, dict):
+            f = export_info.get("file", "")
+            name = export_info.get("name", "unknown")
+            line_num = export_info.get("line", 1)
+        else:
+            continue
+        yield _make_finding(
+            rule="R09", severity="LOW", category="clean-code",
+            file=f, line=line_num,
+            snippet=f"Unused export: {name}",
+            description=f"Exported symbol '{name}' is not imported anywhere in the project",
+            scanner="knip", confidence="high",
+            confidence_reason="Deterministic: knip export analysis",
+        )
+    for dep in data.get("dependencies", []):
+        dep_name = dep if isinstance(dep, str) else dep.get("name", "")
+        yield _make_finding(
+            rule="R14", severity="LOW", category="build",
+            file="package.json", line=1,
+            snippet=f"Unused dependency: {dep_name}",
+            description=f"Dependency '{dep_name}' is listed in package.json but not imported",
+            scanner="knip", confidence="high",
+            confidence_reason="Deterministic: knip dependency analysis",
+        )
+
+
+def _run_madge(project_dir: str, stack: str) -> Iterator[dict[str, str | int | list[str]]]:
+    """Detect circular dependencies (R10 refactoring)."""
+    src = "src/" if os.path.isdir(os.path.join(project_dir, "src")) else "."
+    result = subprocess.run(
+        ["npx", "madge", "--circular", "--json", src],
+        capture_output=True, text=True, cwd=project_dir, timeout=120,
+    )
+    if not result.stdout.strip():
+        return
+    try:
+        cycles = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return
+    for cycle in cycles:
+        if not isinstance(cycle, list) or len(cycle) < 2:
+            continue
+        first_file = cycle[0]
+        chain = " -> ".join(cycle)
+        yield _make_finding(
+            rule="R10", severity="MEDIUM", category="refactoring",
+            file=first_file, line=1,
+            snippet=f"Circular: {chain}",
+            description=f"Circular dependency chain: {chain}",
+            scanner="madge", confidence="high",
+            confidence_reason="Deterministic: madge import graph analysis",
+        )
+
+
+def _run_radon(project_dir: str, stack: str) -> Iterator[dict[str, str | int | list[str]]]:
+    """Detect high-complexity functions (R02 separation of concerns / R09 clean code)."""
+    result = subprocess.run(
+        ["radon", "cc", ".", "-s", "-j", "--min", "C"],
+        capture_output=True, text=True, cwd=project_dir, timeout=120,
+    )
+    if not result.stdout.strip():
+        return
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return
+    for filepath, functions in data.items():
+        rel_path = os.path.relpath(filepath, project_dir) if os.path.isabs(filepath) else filepath
+        for func in functions:
+            complexity = func.get("complexity", 0)
+            name = func.get("name", "unknown")
+            lineno = func.get("lineno", 1)
+            rank = func.get("rank", "C")
+            if complexity < 10:
+                continue
+            severity = "HIGH" if complexity >= 20 else "MEDIUM"
+            yield _make_finding(
+                rule="R02", severity=severity, category="architecture",
+                file=rel_path, line=lineno,
+                snippet=f"{name}: complexity {complexity} (rank {rank})",
+                description=f"Function '{name}' has cyclomatic complexity {complexity} (rank {rank}). Consider splitting into smaller functions.",
+                scanner="radon", confidence="high",
+                confidence_reason=f"Deterministic: radon cyclomatic complexity {complexity} (threshold 10)",
+            )
+
+
+def _run_vulture(project_dir: str, stack: str) -> Iterator[dict[str, str | int | list[str]]]:
+    """Detect dead Python code: unused functions, variables, imports (R09)."""
+    result = subprocess.run(
+        ["vulture", ".", "--min-confidence", "80"],
+        capture_output=True, text=True, cwd=project_dir, timeout=120,
+    )
+    pattern = re.compile(r"^(.+?):(\d+): unused (\w+) '(.+?)' \((\d+)% confidence\)$")
+    for line in result.stdout.splitlines():
+        m = pattern.match(line)
+        if not m:
+            continue
+        filepath, linenum, kind, name, conf = m.groups()
+        rel_path = os.path.relpath(filepath, project_dir) if os.path.isabs(filepath) else filepath
+        yield _make_finding(
+            rule="R09", severity="LOW", category="clean-code",
+            file=rel_path, line=int(linenum),
+            snippet=f"unused {kind} '{name}' ({conf}% confidence)",
+            description=f"Unused {kind}: '{name}' appears to be dead code ({conf}% confidence)",
+            scanner="vulture", confidence="medium" if int(conf) < 90 else "high",
+            confidence_reason=f"Deterministic: vulture dead code detection ({conf}% confidence)",
+        )
+
+
+def _run_npm_audit(project_dir: str, stack: str) -> Iterator[dict[str, str | int | list[str]]]:
+    """Detect dependency vulnerabilities in npm packages (R05 security)."""
+    if not os.path.isfile(os.path.join(project_dir, "package-lock.json")):
+        return
+    result = subprocess.run(
+        ["npm", "audit", "--json"],
+        capture_output=True, text=True, cwd=project_dir, timeout=120,
+    )
+    if not result.stdout.strip():
+        return
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return
+    vulns = data.get("vulnerabilities", {})
+    for pkg_name, info in vulns.items():
+        severity_raw = (info.get("severity") or "low").upper()
+        if severity_raw not in ("CRITICAL", "HIGH", "MODERATE", "LOW"):
+            severity_raw = "MEDIUM"
+        severity_raw = severity_raw.replace("MODERATE", "MEDIUM")
+        via = info.get("via", [])
+        desc_parts: list[str] = []
+        for v in via:
+            if isinstance(v, dict):
+                desc_parts.append(v.get("title", v.get("name", "")))
+            elif isinstance(v, str):
+                desc_parts.append(v)
+        desc = "; ".join(desc_parts[:3]) or f"Vulnerability in {pkg_name}"
+        yield _make_finding(
+            rule="R05", severity=severity_raw, category="security",
+            file="package.json", line=1,
+            snippet=f"{pkg_name}: {desc}",
+            description=f"Dependency vulnerability: {pkg_name} — {desc}",
+            scanner="npm-audit", confidence="high",
+            confidence_reason=f"Deterministic: npm audit CVE database ({severity_raw})",
+        )
+
+
+def _run_pip_audit(project_dir: str, stack: str) -> Iterator[dict[str, str | int | list[str]]]:
+    """Detect dependency vulnerabilities in Python packages (R05 security)."""
+    result = subprocess.run(
+        ["pip-audit", "--format", "json"],
+        capture_output=True, text=True, cwd=project_dir, timeout=120,
+    )
+    if not result.stdout.strip():
+        return
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return
+    deps = data if isinstance(data, list) else data.get("dependencies", [])
+    for dep in deps:
+        vulns = dep.get("vulns", [])
+        if not vulns:
+            continue
+        pkg = dep.get("name", "unknown")
+        ver = dep.get("version", "")
+        for vuln in vulns:
+            vuln_id = vuln.get("id", "")
+            desc = vuln.get("description", f"Vulnerability in {pkg}")[:200]
+            fix_vers = vuln.get("fix_versions", [])
+            severity = "HIGH" if "critical" in desc.lower() else "MEDIUM"
+            yield _make_finding(
+                rule="R05", severity=severity, category="security",
+                file="requirements.txt", line=1,
+                snippet=f"{pkg}=={ver}: {vuln_id}",
+                description=f"Dependency vulnerability: {pkg}=={ver} — {vuln_id}: {desc}",
+                scanner="pip-audit", confidence="high",
+                confidence_reason=f"Deterministic: pip-audit OSV database ({vuln_id})",
+            )
 
 
 def _phase_from_rule(rule: str) -> int:
