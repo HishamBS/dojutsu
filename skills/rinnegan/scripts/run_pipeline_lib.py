@@ -245,3 +245,34 @@ def generate_dag_and_config(
     dag = generate_phase_dag(audit_dir)
     config = generate_rasengan_config(audit_dir, project_dir)
     return dag, config
+
+
+# ---------------------------------------------------------------------------
+# Quality gate wrapper (imports quality_gate module lazily)
+# ---------------------------------------------------------------------------
+
+
+def evaluate_quality_gate_from_audit(
+    audit_dir: str,
+    thresholds: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Evaluate quality gates using findings and health data from an audit dir.
+
+    Convenience wrapper that resolves file paths within *audit_dir* and
+    delegates to :func:`quality_gate.evaluate_quality_gate`.
+
+    Returns the quality gate result dict.
+    """
+    from quality_gate import evaluate_quality_gate
+
+    findings_path = os.path.join(audit_dir, "data", "findings.jsonl")
+    health_path = os.path.join(audit_dir, "data", "pipeline-health.json")
+    if not os.path.isfile(health_path):
+        health_path = None
+
+    return evaluate_quality_gate(
+        findings_path=findings_path,
+        health_path=health_path,
+        thresholds=thresholds,
+        audit_dir=audit_dir,
+    )
