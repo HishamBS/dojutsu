@@ -94,6 +94,8 @@ def detect_tools(stack: str, project_dir: str) -> list[str]:
     agnostic_tools: list[tuple[str, list[str]]] = [
         ("gitleaks", ["gitleaks", "version"]),
         ("env-check", []),  # no binary; always available
+        ("coverage", []),  # no binary; reads existing reports
+        ("assertion-check", []),  # no binary; AST/grep analysis
     ]
     for tool_name, cmd in agnostic_tools:
         if not cmd:
@@ -125,6 +127,8 @@ def run_tool(tool: str, project_dir: str, stack: str) -> list[dict[str, str | in
         "pip-audit": _run_pip_audit,
         "gitleaks": _run_gitleaks,
         "env-check": _run_env_check,
+        "coverage": _run_coverage,
+        "assertion-check": _run_assertion_check,
     }
     runner = runners.get(tool)
     if not runner:
@@ -614,6 +618,20 @@ def _run_env_check(project_dir: str, stack: str) -> Iterator[dict[str, str | int
     """Run env consistency checks (R05 security, R12 real data, R09 clean code)."""
     from env_checker import check_env
     for finding in check_env(project_dir, stack):
+        yield finding
+
+
+def _run_coverage(project_dir: str, stack: str) -> Iterator[dict[str, str | int | list[str]]]:
+    """Analyze existing test coverage reports for uncovered functions (R08)."""
+    from coverage_analyzer import analyze_coverage
+    for finding in analyze_coverage(project_dir, stack):
+        yield finding
+
+
+def _run_assertion_check(project_dir: str, stack: str) -> Iterator[dict[str, str | int | list[str]]]:
+    """Detect test functions with zero assertions (R08)."""
+    from assertion_detector import detect_assertion_free_tests
+    for finding in detect_assertion_free_tests(project_dir, stack):
         yield finding
 
 

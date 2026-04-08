@@ -54,8 +54,8 @@ class TestDetectTools:
     def test_returns_list_for_unknown_stack(self) -> None:
         result = detect_tools("cobol", "/nonexistent/project")
         assert isinstance(result, list)
-        # env-check is always available (language-agnostic, no binary needed)
-        agnostic_tools = {"env-check"}
+        # Language-agnostic tools are always available (no binary needed)
+        agnostic_tools = {"env-check", "coverage", "assertion-check"}
         non_agnostic = [t for t in result if t not in agnostic_tools]
         assert len(non_agnostic) == 0
 
