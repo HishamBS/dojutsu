@@ -177,7 +177,13 @@ def _run_ruff(project_dir: str, stack: str) -> Iterator[dict[str, str | int | li
 
 def _run_mypy(project_dir: str, stack: str) -> Iterator[dict[str, str | int | list[str]]]:
     result = subprocess.run(
-        ["mypy", "--output", "json", "."],
+        [
+            "mypy", "--output", "json",
+            "--ignore-missing-imports",
+            "--check-untyped-defs",
+            "--no-error-summary",
+            ".",
+        ],
         capture_output=True, text=True, cwd=project_dir, timeout=180,
     )
     for line in result.stdout.splitlines():

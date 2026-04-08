@@ -161,7 +161,15 @@ if state == "NEEDS_SCANNING":
         print(f"  FILES: {' '.join(b['files'])}")
 
 elif state == "NEEDS_AGGREGATION":
+    # Pre-aggregation: normalize ALL scanner output files (fixes LLM category drift)
     scanner_files = glob.glob(os.path.join(audit_dir, "data/scanner-output/*.jsonl"))
+    try:
+        from normalize_categories import normalize_findings_file
+        for sf in scanner_files:
+            normalize_findings_file(sf)
+        print("AUTO: Pre-aggregation normalization applied to all scanner output files.")
+    except ImportError:
+        pass
     total_findings = sum(sum(1 for _ in open(f)) for f in scanner_files)
 
     print(f"\nSCANNER_OUTPUT: {len(scanner_files)} files, {total_findings} total findings")
