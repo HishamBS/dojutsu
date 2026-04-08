@@ -13,7 +13,7 @@ You receive:
 
 ## Output Structure
 
-Generate the report as a markdown summary printed to the user. Do not create a file unless explicitly requested.
+Generate the report as a markdown summary. **Write it to `docs/audit/remediation-report.md`** AND print it to the user. This file persists the remediation results for PR descriptions and sprint reviews.
 
 ```markdown
 # Rasengan Remediation Report
@@ -48,6 +48,20 @@ Generate the report as a markdown summary printed to the user. Do not create a f
 - `[hash]` fix(phase-0): Foundation - X applied, Y already-resolved
 - `[hash]` fix(phase-1): Security - X applied, Z skipped
 - ...
+
+## Before/After Comparison
+
+| Severity | Before | After | Resolved |
+|----------|--------|-------|----------|
+| CRITICAL | [N] | [N] | [N resolved] |
+| HIGH | [N] | [N] | [N resolved] |
+| MEDIUM | [N] | [N] | [N resolved] |
+| LOW | [N] | [N] | [N resolved] |
+| **Total** | **[N]** | **[N remaining]** | **[N resolved]** |
+
+**Before:** Read severity counts from `data/findings.jsonl.bak` (backup from before remediation).
+**After:** Count findings with status != "completed" in current task files.
+If `findings.jsonl.bak` does not exist, note "Pre-remediation baseline not available."
 
 ## Flagged Items for Human Review
 

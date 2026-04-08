@@ -60,6 +60,10 @@ def get_state(project_dir: str) -> str:
     if not os.path.exists(os.path.join(deep_dir, "deployment-plan.md")):
         return "NEEDS_DEPLOYMENT_PLAN"
 
+    # Step 7: Executive brief (LLM — 1-page management summary)
+    if not os.path.exists(os.path.join(deep_dir, "executive-brief.md")):
+        return "NEEDS_EXECUTIVE_BRIEF"
+
     return "COMPLETE"
 
 
@@ -217,6 +221,17 @@ def run_pipeline(project_dir: str) -> int:
             print(f"  Agent writes: {deep_dir}/deployment-plan.md")
             print(f"  Then run this script again.")
             return 0
+
+    if state == "NEEDS_EXECUTIVE_BRIEF":
+        log_dispatch(project_dir, task="executive_brief", tokens=5000, model="sonnet")
+
+        print(f"\nACTION: Read {skill_dir}/executive-brief-prompt.md then dispatch executive brief generator.")
+        print(f"  MODEL: sonnet")
+        print(f"  ROLE: dojutsu-enricher (if agent-mux configured)")
+        print(f"  Agent reads: findings.jsonl + inventory.json + narrative.md (executive summary only)")
+        print(f"  Agent writes: {deep_dir}/executive-brief.md")
+        print(f"  Then run this script again.")
+        return 0
 
     if state == "COMPLETE":
         # Count artifacts

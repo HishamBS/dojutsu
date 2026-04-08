@@ -68,6 +68,50 @@ For each pattern:
 - If a layer has zero findings for a rule, mark PASS — do not speculate
 - Cite exact counts, not approximations
 
+### 5. Visual Charts (Mermaid)
+
+Add these Mermaid diagrams for visual scanning. GitHub renders them natively.
+
+**Severity Distribution Pie Chart** (after the header, before section 1):
+
+````markdown
+```mermaid
+pie title Finding Severity Distribution
+    "CRITICAL" : [count]
+    "HIGH" : [count]
+    "MEDIUM" : [count]
+    "LOW" : [count]
+```
+````
+
+**Per-Layer Density Bar Chart** (after section 3 Key Metrics):
+
+````markdown
+```mermaid
+xychart-beta
+    title "Finding Density by Layer (per KLOC)"
+    x-axis ["layer1", "layer2", ...]
+    y-axis "Findings per KLOC" 0 --> [max]
+    bar [density1, density2, ...]
+```
+````
+
+Replace placeholder values with actual computed data. If a layer has zero findings, include it with value 0.
+
+### 6. Readiness Benchmark
+
+After the Key Metrics section, add a readiness assessment:
+
+```markdown
+| Band | Range | Status |
+|------|-------|--------|
+| Production Ready | 95-100% | [check or blank] |
+| Needs Attention | 80-94% | [check or blank] |
+| Blocked | <80% | [check or blank] |
+```
+
+Readiness formula: `100 - (weighted_score / LOC_in_KLOC)` where CRITICAL=x10, HIGH=x3, MEDIUM=x1, LOW=x0.2.
+
 ## Output Format
 
 Write the scorecard as clean markdown to `docs/audit/deep/scorecard.md`. No JSONL, no code blocks around the whole document.
