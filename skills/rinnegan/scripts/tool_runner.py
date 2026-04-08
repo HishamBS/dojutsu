@@ -9,6 +9,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import xml.etree.ElementTree as ET
 from typing import Iterator
 
@@ -89,6 +90,20 @@ def detect_tools(stack: str, project_dir: str) -> list[str]:
             available.append(tool_name)
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             continue
+    # Language-agnostic tools available for all stacks
+    agnostic_tools: list[tuple[str, list[str]]] = [
+        ("gitleaks", ["gitleaks", "version"]),
+        ("env-check", []),  # no binary; always available
+    ]
+    for tool_name, cmd in agnostic_tools:
+        if not cmd:
+            available.append(tool_name)
+            continue
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=10)
+            available.append(tool_name)
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            continue
     return available
 
 
@@ -108,6 +123,8 @@ def run_tool(tool: str, project_dir: str, stack: str) -> list[dict[str, str | in
         "vulture": _run_vulture,
         "npm-audit": _run_npm_audit,
         "pip-audit": _run_pip_audit,
+        "gitleaks": _run_gitleaks,
+        "env-check": _run_env_check,
     }
     runner = runners.get(tool)
     if not runner:
@@ -547,6 +564,57 @@ def _run_npm_audit(project_dir: str, stack: str) -> Iterator[dict[str, str | int
             scanner="npm-audit", confidence="high",
             confidence_reason=f"Deterministic: npm audit CVE database ({severity_raw})",
         )
+
+
+def _run_gitleaks(project_dir: str, stack: str) -> Iterator[dict[str, str | int | list[str]]]:
+    """Detect hardcoded secrets in source code (R05 security)."""
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        subprocess.run(
+            [
+                "gitleaks", "detect",
+                "--source", ".",
+                "--no-git",
+                "--report-format", "json",
+                "--report-path", tmp_path,
+            ],
+            capture_output=True, text=True, cwd=project_dir, timeout=120,
+        )
+        if not os.path.isfile(tmp_path) or os.path.getsize(tmp_path) == 0:
+            return
+        with open(tmp_path) as f:
+            try:
+                data = json.load(f)
+            except json.JSONDecodeError:
+                return
+    finally:
+        if os.path.isfile(tmp_path):
+            os.unlink(tmp_path)
+    if not isinstance(data, list):
+        return
+    for entry in data:
+        rel_file: str = entry.get("File", "")
+        start_line: int = entry.get("StartLine", 1)
+        end_line: int = entry.get("EndLine", start_line)
+        description: str = entry.get("Description", "Secret detected")
+        rule_id: str = entry.get("RuleID", "unknown")
+        yield _make_finding(
+            rule="R05", severity="CRITICAL", category="security",
+            file=rel_file, line=start_line,
+            snippet=f"[REDACTED] {description}",
+            description=f"Hardcoded secret detected: {description} (rule: {rule_id})",
+            scanner="gitleaks", confidence="high",
+            confidence_reason=f"Deterministic: gitleaks {rule_id}",
+            tool_rule_id=rule_id,
+        )
+
+
+def _run_env_check(project_dir: str, stack: str) -> Iterator[dict[str, str | int | list[str]]]:
+    """Run env consistency checks (R05 security, R12 real data, R09 clean code)."""
+    from env_checker import check_env
+    for finding in check_env(project_dir, stack):
+        yield finding
 
 
 def _run_pip_audit(project_dir: str, stack: str) -> Iterator[dict[str, str | int | list[str]]]:
