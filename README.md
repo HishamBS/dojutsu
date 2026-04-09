@@ -63,7 +63,7 @@ Dojutsu is the conductor. When you type `/dojutsu`, it chains all four eyes toge
 
 ## Prerequisites
 
-You need two things:
+You need three things:
 
 1. **Python 3.9 or newer.** Check by opening your terminal and running:
    ```
@@ -82,6 +82,39 @@ You need two things:
    - [Gemini CLI](https://github.com/google-gemini/gemini-cli)
 
    If you can open your terminal, type the agent's command, and get a response, you are ready.
+
+3. **Scanning tools.** The pipeline uses real linting and security tools to produce zero-false-positive findings. The installer detects and installs them automatically, but here is the full list:
+
+   **Universal (all projects):**
+   | Tool | What it catches | Install |
+   |------|----------------|---------|
+   | [Semgrep](https://semgrep.dev) | Security bugs, SAST patterns | `pipx install semgrep` |
+   | [gitleaks](https://github.com/gitleaks/gitleaks) | Hardcoded secrets, API keys | `brew install gitleaks` |
+   | [jscpd](https://github.com/kucherenko/jscpd) | Code duplication | `npm i -g jscpd` |
+
+   **TypeScript / JavaScript projects:**
+   | Tool | What it catches | Install |
+   |------|----------------|---------|
+   | [ESLint](https://eslint.org) | Lint violations, code quality | `npm i -g eslint` |
+   | [TypeScript](https://typescriptlang.org) | Type errors | `npm i -g typescript` |
+   | [knip](https://knip.dev) | Dead exports, unused code | `npm i -g knip` |
+   | [madge](https://github.com/pahen/madge) | Circular dependencies | `npm i -g madge` |
+
+   **Python projects:**
+   | Tool | What it catches | Install |
+   |------|----------------|---------|
+   | [Ruff](https://docs.astral.sh/ruff/) | Lint violations (replaces flake8) | `pipx install ruff` |
+   | [mypy](https://mypy-lang.org) | Type errors | `pipx install mypy` |
+   | [Radon](https://radon.readthedocs.io) | Cyclomatic complexity | `pipx install radon` |
+   | [Vulture](https://github.com/jendrikseipp/vulture) | Dead code | `pipx install vulture` |
+   | [pip-audit](https://github.com/pypa/pip-audit) | Dependency vulnerabilities | `pipx install pip-audit` |
+
+   > **Missing tools do not block the pipeline.** Each tool is optional -- if it is not installed, the pipeline skips it and reports fewer findings. But for a complete audit, install all the tools for your project's stack. The installer (`setup.sh`) handles this automatically.
+
+   You can check tool status at any time:
+   ```bash
+   bash ~/dojutsu/skills/rinnegan/scripts/install-tools.sh --check
+   ```
 
 **Platform support:** macOS, Linux, and Windows (via WSL). The installer (`setup.sh`) is a bash script. On Windows, use WSL to run it.
 
@@ -415,7 +448,7 @@ To add a new rule:
 
 ### Running Tests
 
-The test suite covers the rinnegan and rasengan pipelines (93 tests total):
+The test suite covers the rinnegan and rasengan pipelines (294 tests total):
 
 ```bash
 cd ~/dojutsu

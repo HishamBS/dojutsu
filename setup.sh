@@ -172,6 +172,17 @@ if ! command -v git &>/dev/null; then
 fi
 print_success "git $(git --version | awk '{print $3}')"
 
+# ── Step 1b: Install scanning tools ─────────────────────────────────────
+print_header "Scanning Tools"
+
+INSTALL_TOOLS_SCRIPT="$SKILLS_SRC/rinnegan/scripts/install-tools.sh"
+if [ -f "$INSTALL_TOOLS_SCRIPT" ]; then
+    bash "$INSTALL_TOOLS_SCRIPT"
+else
+    print_warn "install-tools.sh not found. Scanning tools must be installed manually."
+    print_info "See the Prerequisites section in README.md for the full list."
+fi
+
 # ── Step 2: Detect available coding agents ───────────────────────────────
 print_header "Detecting Coding Agents"
 
