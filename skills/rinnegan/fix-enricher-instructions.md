@@ -26,3 +26,15 @@ Post-enrichment validation rejects batches where >5% of findings lack fixes.
    e. Output the COMPLETE finding JSON object — all original fields preserved + fix fields added.
 4. Write ALL enriched findings to `[AUDIT_DIR]/data/enriched/[LAYER_NAME].jsonl`.
 5. Verify: line count of output == line count of input for this layer.
+
+## Completion Sentinel
+
+After writing your enriched JSONL output, write a sentinel file:
+
+**Write to:** `[OUTPUT_PATH].done`
+**Content (exact JSON, one line):**
+```json
+{"lines": [ENRICHED_COUNT], "layer": "[LAYER_NAME]", "timestamp": "[CURRENT_ISO_TIMESTAMP]"}
+```
+
+This prevents work loss if the session is interrupted after your output is written.

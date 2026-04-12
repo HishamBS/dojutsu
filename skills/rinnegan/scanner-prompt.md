@@ -337,3 +337,24 @@ If you detect your context window is approaching capacity before all files scann
 4. The orchestrator will re-dispatch the remaining files to a new scanner.
 
 Do NOT rush through remaining files with shallow scans.
+
+## Completion Sentinel (CRITICAL for session resilience)
+
+After writing ALL findings to [OUTPUT_FILE_PATH], you MUST write a sentinel file:
+
+**Write to:** `[OUTPUT_FILE_PATH].done`
+**Content (exact JSON, one line):**
+```json
+{"lines": [FINDING_COUNT], "files_scanned": [TOTAL_FILES_READ], "timestamp": "[CURRENT_ISO_TIMESTAMP]"}
+```
+
+Example: if you wrote 23 findings to `scanner-3-services.jsonl` after scanning 15 files:
+```json
+{"lines": 23, "files_scanned": 15, "timestamp": "2026-04-12T09:30:00Z"}
+```
+
+**Why this matters:** If the orchestrating session is interrupted after you write findings but before it updates its tracking state, the sentinel tells the pipeline your output is complete. Without it, your work may be re-dispatched and your findings overwritten.
+
+Write the sentinel IMMEDIATELY after writing findings, before emitting SCAN_COMPLETE.
+
+For SCAN_PARTIAL: write the sentinel with the actual count (files scanned so far, not total). The pipeline uses this to create a follow-up batch for remaining files.

@@ -17,6 +17,11 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from run_pipeline_lib import generate_dag_and_config, evaluate_quality_gate_from_audit, validate_null_fix_coverage
 from dojutsu_config import DojutsuConfig, PROMPT_OVERHEAD_TOKENS, TOKENS_PER_LOC, TOOL_OVERHEAD_PER_FILE
+from output_validator import (
+    is_output_complete,
+    validate_aggregation_completeness,
+    validate_enrichment_completeness,
+)
 
 _cfg = DojutsuConfig()
 
@@ -58,10 +63,34 @@ def get_state():
     pending = sum(1 for b in plan["batches"] if b["status"] == "pending")
     if pending > 0:
         return "NEEDS_SCANNING"
-    if not file_exists("data/findings.jsonl") or count_lines("data/findings.jsonl") == 0:
+    findings_path = os.path.join(audit_dir, "data/findings.jsonl")
+    if not is_output_complete(findings_path):
         return "NEEDS_AGGREGATION"
-    enriched_count = len(glob.glob(os.path.join(audit_dir, "data/enriched/*.jsonl")))
-    if enriched_count == 0:
+    # Cross-reference: verify findings aren't drastically fewer than scanner output
+    scanner_dir = os.path.join(audit_dir, "data/scanner-output")
+    if os.path.isdir(scanner_dir):
+        agg_ok, _agg_reason = validate_aggregation_completeness(findings_path, scanner_dir)
+        if not agg_ok:
+            # Remove incomplete findings so aggregator re-runs cleanly
+            try:
+                os.remove(findings_path)
+                sentinel = findings_path + ".done"
+                if os.path.isfile(sentinel):
+                    os.remove(sentinel)
+            except OSError:
+                pass
+            return "NEEDS_AGGREGATION"
+    enriched_dir = os.path.join(audit_dir, "data/enriched")
+    enriched_files = [
+        f for f in glob.glob(os.path.join(enriched_dir, "*.jsonl"))
+        if not f.endswith(".done")
+    ]
+    if not enriched_files:
+        return "NEEDS_ENRICHMENT"
+    complete_layers, incomplete_layers = validate_enrichment_completeness(
+        os.path.join(audit_dir, "data/findings.jsonl"), enriched_dir
+    )
+    if incomplete_layers:
         return "NEEDS_ENRICHMENT"
     if not file_exists("data/phase-dag.json"):
         return "NEEDS_PHASES"
@@ -159,7 +188,7 @@ if state == "NEEDS_SCANNING":
     for b in plan["batches"]:
         if b["status"] == "pending":
             output_path = os.path.join(audit_dir, b["output_file"])
-            if os.path.isfile(output_path) and os.path.getsize(output_path) > 0:
+            if is_output_complete(output_path):
                 b["status"] = "complete"
                 auto_recovered += 1
     if auto_recovered > 0:
@@ -267,23 +296,37 @@ elif state == "NEEDS_ENRICHMENT":
     findings = [json.loads(l) for l in open(os.path.join(audit_dir, "data/findings.jsonl"))]
     from collections import Counter
     layers = Counter(f.get("layer", "unknown") for f in findings)
-    os.makedirs(os.path.join(audit_dir, "data/enriched"), exist_ok=True)
+    enriched_dir = os.path.join(audit_dir, "data/enriched")
+    os.makedirs(enriched_dir, exist_ok=True)
 
-    print(f"\nFINDINGS: {len(findings)} across {len(layers)} layers")
-    enr_tier = _cfg.tier_for("enricher")
-    for name, count in layers.most_common():
-        log_dispatch(project_dir, task=f"enricher_{name}", tokens=count * 200 + 5000, model=enr_tier)
+    # Detect already-completed layers (from previous session)
+    complete_layers, incomplete_layers = validate_enrichment_completeness(
+        os.path.join(audit_dir, "data/findings.jsonl"), enriched_dir
+    )
+    if complete_layers:
+        print(f"AUTO_RECOVER: {len(complete_layers)} layers already enriched: {', '.join(sorted(complete_layers))}")
 
-    print(f"\nACTION: Read {skill_dir}/fix-enricher-instructions.md then dispatch 1 Fix Enricher Agent per layer.")
-    print(f"  MODEL: {enr_tier} ({_cfg.model_for('enricher')})")
-    print(f"  ROLE: dojutsu-enricher (if agent-mux configured)")
-    print(f"  NOTE: Enrichers must understand code well enough to write correct fixes.")
-    print(f"Each enricher reads findings.jsonl, filters for its layer, adds target_code/fix_plan, writes enriched/.")
-    for name, count in layers.most_common():
-        print(f"  LAYER: {name} ({count} findings) -> {audit_dir}/data/enriched/{name}.jsonl")
-    print(f"\nAfter EACH enricher completes, its output is safe on disk. If rate-limited, resume will pick up completed layers.")
-    print(f"When all enrichers are done, run: python3 {skill_dir}/scripts/merge-enriched.py {audit_dir}")
-    print(f"Then run this script again.")
+    # Only dispatch incomplete layers
+    pending_layers = {name: count for name, count in layers.items() if name not in complete_layers}
+
+    if not pending_layers:
+        print(f"All {len(layers)} layers enriched. Run merge-enriched.py then re-run pipeline.")
+        print(f"  python3 {skill_dir}/scripts/merge-enriched.py {audit_dir}")
+    else:
+        print(f"\nFINDINGS: {len(findings)} across {len(layers)} layers ({len(complete_layers)} already enriched)")
+        enr_tier = _cfg.tier_for("enricher")
+        for name, count in sorted(pending_layers.items(), key=lambda x: -x[1]):
+            log_dispatch(project_dir, task=f"enricher_{name}", tokens=count * 200 + 5000, model=enr_tier)
+
+        print(f"\nACTION: Read {skill_dir}/fix-enricher-instructions.md then dispatch 1 Fix Enricher Agent per layer.")
+        print(f"  MODEL: {enr_tier} ({_cfg.model_for('enricher')})")
+        print(f"  ROLE: dojutsu-enricher (if agent-mux configured)")
+        print(f"  NOTE: Enrichers must understand code well enough to write correct fixes.")
+        for name, count in sorted(pending_layers.items(), key=lambda x: -x[1]):
+            print(f"  LAYER: {name} ({count} findings) -> {enriched_dir}/{name}.jsonl")
+        print(f"\nAfter EACH enricher completes, its output + sentinel are safe on disk.")
+        print(f"When all enrichers are done, run: python3 {skill_dir}/scripts/merge-enriched.py {audit_dir}")
+        print(f"Then run this script again.")
 
 elif state == "NEEDS_PHASES":
     # Null-fix validation gate: check enrichment quality before proceeding

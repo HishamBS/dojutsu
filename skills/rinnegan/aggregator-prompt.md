@@ -258,3 +258,15 @@ After emitting all output, emit exactly one line:
 ```
 AGGREGATE_COMPLETE: [FINAL_COUNT] findings written to [AUDIT_DATA_DIR]/findings.jsonl
 ```
+
+## Completion Sentinel
+
+After writing `findings.jsonl` and `config.json`, write a sentinel file:
+
+**Write to:** `[AUDIT_DATA_DIR]/findings.jsonl.done`
+**Content (exact JSON, one line):**
+```json
+{"lines": [FINDING_COUNT], "scanner_files_processed": [FILE_COUNT], "timestamp": "[CURRENT_ISO_TIMESTAMP]"}
+```
+
+This prevents work loss if the session is interrupted after your output is written.
