@@ -30,10 +30,10 @@ SHARINGAN_CONFIG_LOADED=false
 
 sharingan_load_config() {
   if [[ -f "$SHARINGAN_CONFIG_FILE" ]] && command -v jq >/dev/null 2>&1; then
-    if jq empty "$SHARINGAN_CONFIG_FILE" 2>/dev/null; then
+    if jq -e '(.languages // null) | type == "object"' "$SHARINGAN_CONFIG_FILE" >/dev/null 2>&1; then
       SHARINGAN_CONFIG_LOADED=true
     else
-      echo "WARN: project-types.json is invalid JSON, using fallback" >&2
+      echo "WARN: project-types.json missing current .languages schema, using fallback" >&2
       SHARINGAN_CONFIG_LOADED=false
     fi
   else

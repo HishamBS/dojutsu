@@ -13,15 +13,38 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib-project-types.sh"
 
+load_capability_value() {
+  local file="$1"
+  local field="$2"
+
+  if command -v jq >/dev/null 2>&1 && jq -e . "$file" >/dev/null 2>&1; then
+    jq -r ".agents.SharinganVerifier.${field} // \"\"" "$file"
+    return
+  fi
+
+  awk -v target="$field" '
+    /^agents:[[:space:]]*$/ { in_agents=1; next }
+    in_agents && /^[^[:space:]]/ { in_agents=0 }
+    in_agents && /^[[:space:]]{2}SharinganVerifier:[[:space:]]*$/ { in_verifier=1; next }
+    in_verifier && /^[[:space:]]{2}[^[:space:]]/ { in_verifier=0 }
+    in_verifier && $1 == target ":" {
+      value=$2
+      gsub(/^"|"$/, "", value)
+      print value
+      exit
+    }
+  ' "$file"
+}
+
 # ── Read engine+model from SSOT (NEVER hardcode — matches SPSM pipeline pattern) ──
 # Look for agent capabilities: skill-local first, then user config, then defaults
 AGENT_CAPS="${SCRIPT_DIR}/../config/agent-capabilities.yaml"
 [[ ! -f "$AGENT_CAPS" ]] && AGENT_CAPS="${HOME}/.config/spsm/policy/agent-capabilities.yaml"
 SSOT_ENGINE=""
 SSOT_MODEL=""
-if [[ -f "$AGENT_CAPS" ]] && command -v jq >/dev/null 2>&1; then
-  SSOT_ENGINE=$(jq -r '.agents.SharinganVerifier.engine // "codex"' "$AGENT_CAPS" 2>/dev/null)
-  SSOT_MODEL=$(jq -r '.agents.SharinganVerifier.model // ""' "$AGENT_CAPS" 2>/dev/null)
+if [[ -f "$AGENT_CAPS" ]]; then
+  SSOT_ENGINE=$(load_capability_value "$AGENT_CAPS" engine 2>/dev/null || true)
+  SSOT_MODEL=$(load_capability_value "$AGENT_CAPS" model 2>/dev/null || true)
 fi
 
 # ── Parse args ──
@@ -182,7 +205,11 @@ else
       ;;
     codex)
       if command -v codex >/dev/null 2>&1; then
-        codex --quiet --full-auto "$VERIFIER_PROMPT" 2>&1
+        CODEX_ARGS=(exec --full-auto -C "$(pwd)")
+        if [[ -n "$MODEL" ]]; then
+          CODEX_ARGS+=(-m "$MODEL")
+        fi
+        codex "${CODEX_ARGS[@]}" "$VERIFIER_PROMPT" 2>&1
       else
         echo "ERROR: codex CLI not found" >&2
         exit 1
