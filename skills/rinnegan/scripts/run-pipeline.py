@@ -150,7 +150,23 @@ print(f"SKILL_DIR: {skill_dir}")
 print(f"PROJECT_DIR: {project_dir}")
 
 if state == "NEEDS_SCANNING":
-    plan = json.load(open(os.path.join(audit_dir, "data/scan-plan.json")))
+    plan_path = os.path.join(audit_dir, "data/scan-plan.json")
+    plan = json.load(open(plan_path))
+
+    # Auto-recovery: detect batches that completed on disk but status wasn't updated
+    # (happens when session ends between scanner output write and scan-plan.json update)
+    auto_recovered = 0
+    for b in plan["batches"]:
+        if b["status"] == "pending":
+            output_path = os.path.join(audit_dir, b["output_file"])
+            if os.path.isfile(output_path) and os.path.getsize(output_path) > 0:
+                b["status"] = "complete"
+                auto_recovered += 1
+    if auto_recovered > 0:
+        plan["completed"] = sum(1 for b in plan["batches"] if b["status"] == "complete")
+        with open(plan_path, "w") as f:
+            json.dump(plan, f, indent=2)
+        print(f"AUTO_RECOVER: {auto_recovered} batches had output on disk but were marked pending — recovered")
 
     # Circuit breaker: mark over-retried batches as failed
     MAX_BATCH_RETRIES = 2
@@ -189,7 +205,8 @@ if state == "NEEDS_SCANNING":
         print(f"  CONTEXT: {_cfg.context_window_for('scanner'):,} tokens")
         print(f"  ROLE: dojutsu-scanner (if agent-mux configured)")
         print(f"Each scanner Agent prompt must include: scanner-prompt.md content + file list + stack + layer + output path.")
-        print(f"After ALL dispatched scanners complete, update scan-plan.json: set each batch status to 'complete'.")
+        print(f"IMPORTANT: After EACH scanner completes, immediately update scan-plan.json for that batch (set status to 'complete').")
+        print(f"Do NOT wait for all scanners — update one at a time to prevent work loss on rate limits.")
         print(f"Then run this script again.\n")
 
         for b in pending[:5]:
@@ -264,7 +281,8 @@ elif state == "NEEDS_ENRICHMENT":
     print(f"Each enricher reads findings.jsonl, filters for its layer, adds target_code/fix_plan, writes enriched/.")
     for name, count in layers.most_common():
         print(f"  LAYER: {name} ({count} findings) -> {audit_dir}/data/enriched/{name}.jsonl")
-    print(f"\nAfter ALL enrichers complete, run: python3 {skill_dir}/scripts/merge-enriched.py {audit_dir}")
+    print(f"\nAfter EACH enricher completes, its output is safe on disk. If rate-limited, resume will pick up completed layers.")
+    print(f"When all enrichers are done, run: python3 {skill_dir}/scripts/merge-enriched.py {audit_dir}")
     print(f"Then run this script again.")
 
 elif state == "NEEDS_PHASES":
