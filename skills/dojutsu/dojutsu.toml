@@ -10,8 +10,8 @@ batch_size = 30                     # files per scanner agent dispatch
 max_parallel_agents = 3             # max concurrent agent dispatches
 grep_min_patterns_per_lang = 20     # warn if language has fewer patterns
 signature_extraction = true         # extract function signatures before LLM scan
-session_token_budget = 500000       # auto-pause when total dispatch tokens exceed this
-                                    # Claude Max: 500000, Claude Pro: 250000, Codex: 500000
+session_token_budget = 2000000      # auto-pause when total dispatch tokens exceed this
+                                    # Claude Max: 2000000, Claude Pro: 250000, Codex: 500000
                                     # setup.sh sets this based on your subscription
 progress_prefix = "[dojutsu]"       # prefix for progress output lines
 
