@@ -39,7 +39,7 @@ gemini = "gemini-3.1-pro"          # premium Gemini
 
 # Task → tier mapping
 [models.assignments]
-scanner = "cheap"
+scanner = "mid"
 aggregator = "cheap"
 enricher = "mid"
 layer_generator = "mid"
@@ -51,6 +51,13 @@ scorecard_generator = "mid"
 deployment_planner = "mid"
 fixer = "mid"
 verifier = "mid"                    # MUST use different engine from builder
+
+[models.context_windows]
+# Context window sizes per tier — used for dynamic batch sizing.
+# These MUST match the actual model limits. Update when models change.
+cheap = 200_000       # Haiku 4.5: 200k
+mid = 1_000_000       # Sonnet 4.6: 1M
+premium = 1_000_000   # Opus 4.6: 1M
 
 [dispatch]
 mode = "native"                     # "native" or "agent-mux" — set by setup.sh

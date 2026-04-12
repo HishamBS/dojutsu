@@ -59,6 +59,8 @@ GO_LAYER_PATTERNS = {
     'tests': ['_test.go'],
 }
 
+MAX_FILE_LOC = 10_000  # skip files > 10k lines from scanning (tagged OVERSIZED)
+
 SKIP_DIRS = {'node_modules', '.next', '__pycache__', '.git', 'dist', 'build',
              '.venv', 'venv', '.turbo', '.cache', 'coverage', '.nyc_output'}
 
@@ -137,12 +139,20 @@ for root, dirs, filenames in os.walk(project_dir):
 
         # Tag
         tag = 'SOURCE'
+        skip_reason = None
         if any(p in rel_lower for p in ['__tests__/', '.test.', '.spec.', '/test/', '/tests/']):
             tag = 'TEST'
         elif any(p in rel_lower for p in ['generated/', 'auto-generated']):
             tag = 'GENERATED'
 
-        files.append({"path": rel_path, "loc": loc, "layer": layer, "tag": tag})
+        if loc > MAX_FILE_LOC:
+            tag = 'OVERSIZED'
+            skip_reason = f"Exceeds {MAX_FILE_LOC} LOC limit ({loc} lines)"
+
+        file_entry = {"path": rel_path, "loc": loc, "layer": layer, "tag": tag}
+        if skip_reason:
+            file_entry["skip_reason"] = skip_reason
+        files.append(file_entry)
         total_loc += loc
         if layer not in layers:
             layers[layer] = {"files": [], "loc": 0}

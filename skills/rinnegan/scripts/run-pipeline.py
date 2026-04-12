@@ -16,6 +16,9 @@ except ImportError:
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from run_pipeline_lib import generate_dag_and_config, evaluate_quality_gate_from_audit, validate_null_fix_coverage
+from dojutsu_config import DojutsuConfig, PROMPT_OVERHEAD_TOKENS, TOKENS_PER_LOC, TOOL_OVERHEAD_PER_FILE
+
+_cfg = DojutsuConfig()
 
 project_dir = sys.argv[1]
 audit_dir = os.path.join(project_dir, "docs", "audit")
@@ -148,29 +151,51 @@ print(f"PROJECT_DIR: {project_dir}")
 
 if state == "NEEDS_SCANNING":
     plan = json.load(open(os.path.join(audit_dir, "data/scan-plan.json")))
+
+    # Circuit breaker: mark over-retried batches as failed
+    MAX_BATCH_RETRIES = 2
+    for b in plan["batches"]:
+        if b.get("retries", 0) >= MAX_BATCH_RETRIES and b["status"] == "pending":
+            b["status"] = "failed"
+
+    # Save if any changed to failed
+    failed = [b for b in plan["batches"] if b["status"] == "failed"]
+    if failed:
+        with open(os.path.join(audit_dir, "data/scan-plan.json"), "w") as f:
+            json.dump(plan, f, indent=2)
+        print(f"  CIRCUIT BREAKER: {len(failed)} batches exceeded {MAX_BATCH_RETRIES} retries — marked as failed, skipping")
+
+    # Only dispatch non-failed pending batches
     pending = [b for b in plan["batches"] if b["status"] == "pending"]
     complete = sum(1 for b in plan["batches"] if b["status"] == "complete")
-    inv = json.load(open(os.path.join(audit_dir, "data/inventory.json")))
 
-    print(f"\nSCAN_PROGRESS: {complete}/{plan['total_batches']} complete, {len(pending)} pending")
-    print(f"STACK: {inv.get('stack', 'unknown')}/{inv.get('framework', 'unknown')}")
-    inv = json.load(open(os.path.join(audit_dir, "data/inventory.json")))
-    avg_loc = inv["total_loc"] // max(len(inv["files"]), 1)
-    for b in pending[:5]:
-        log_dispatch(project_dir, task=f"scanner_{b['id']}", tokens=len(b['files']) * avg_loc * 4 + 2000, model="haiku")
+    if not pending:
+        # Circuit breaker resolved all remaining batches — re-run to advance
+        print(f"  All remaining batches resolved ({complete} complete, {len(failed)} failed). Re-run to advance pipeline.")
+    else:
+        inv = json.load(open(os.path.join(audit_dir, "data/inventory.json")))
 
-    print(f"\nACTION: Read {skill_dir}/scanner-prompt.md then dispatch up to 5 scanner Agents.")
-    print(f"  MODEL: haiku")
-    print(f"  ROLE: dojutsu-scanner (if agent-mux configured)")
-    print(f"  NOTE: Scanners do pattern detection — cheap models handle this well. Do NOT use opus.")
-    print(f"Each scanner Agent prompt must include: scanner-prompt.md content + file list + stack + layer + output path.")
-    print(f"After ALL dispatched scanners complete, update scan-plan.json: set each batch status to 'complete'.")
-    print(f"Then run this script again.\n")
+        print(f"\nSCAN_PROGRESS: {complete}/{plan['total_batches']} complete, {len(pending)} pending, {len(failed)} failed")
+        print(f"STACK: {inv.get('stack', 'unknown')}/{inv.get('framework', 'unknown')}")
+        avg_loc = inv["total_loc"] // max(len(inv["files"]), 1)
+        scanner_tier = _cfg.tier_for("scanner")
+        scanner_model = _cfg.model_for("scanner")
+        for b in pending[:5]:
+            tokens_est = PROMPT_OVERHEAD_TOKENS + len(b['files']) * (avg_loc * TOKENS_PER_LOC + TOOL_OVERHEAD_PER_FILE)
+            log_dispatch(project_dir, task=f"scanner_{b['id']}", tokens=tokens_est, model=scanner_tier)
 
-    for b in pending[:5]:
-        output_path = os.path.join(audit_dir, b["output_file"])
-        print(f"SCANNER_BATCH: id={b['id']} layer={b['layer']} output={output_path} files={len(b['files'])}")
-        print(f"  FILES: {' '.join(b['files'])}")
+        print(f"\nACTION: Read {skill_dir}/scanner-prompt.md then dispatch up to 5 scanner Agents.")
+        print(f"  MODEL: {scanner_tier} ({scanner_model})")
+        print(f"  CONTEXT: {_cfg.context_window_for('scanner'):,} tokens")
+        print(f"  ROLE: dojutsu-scanner (if agent-mux configured)")
+        print(f"Each scanner Agent prompt must include: scanner-prompt.md content + file list + stack + layer + output path.")
+        print(f"After ALL dispatched scanners complete, update scan-plan.json: set each batch status to 'complete'.")
+        print(f"Then run this script again.\n")
+
+        for b in pending[:5]:
+            output_path = os.path.join(audit_dir, b["output_file"])
+            print(f"SCANNER_BATCH: id={b['id']} layer={b['layer']} output={output_path} files={len(b['files'])}")
+            print(f"  FILES: {' '.join(b['files'])}")
 
 elif state == "NEEDS_AGGREGATION":
     # Pre-aggregation: validate scanner output, then normalize
@@ -208,10 +233,11 @@ elif state == "NEEDS_AGGREGATION":
     total_findings = sum(sum(1 for _ in open(f)) for f in scanner_files)
 
     print(f"\nSCANNER_OUTPUT: {len(scanner_files)} files, {total_findings} total findings")
-    log_dispatch(project_dir, task="aggregator", tokens=15000, model="haiku")
+    agg_tier = _cfg.tier_for("aggregator")
+    log_dispatch(project_dir, task="aggregator", tokens=15000, model=agg_tier)
 
     print(f"\nACTION: Read {skill_dir}/aggregator-prompt.md then dispatch 1 Aggregator Agent.")
-    print(f"  MODEL: haiku")
+    print(f"  MODEL: {agg_tier} ({_cfg.model_for('aggregator')})")
     print(f"  ROLE: dojutsu-scanner (if agent-mux configured)")
     print(f"Include in prompt: aggregator-prompt.md content + these paths:")
     print(f"  SCANNER_OUTPUT_DIR: {audit_dir}/data/scanner-output/")
@@ -227,13 +253,14 @@ elif state == "NEEDS_ENRICHMENT":
     os.makedirs(os.path.join(audit_dir, "data/enriched"), exist_ok=True)
 
     print(f"\nFINDINGS: {len(findings)} across {len(layers)} layers")
+    enr_tier = _cfg.tier_for("enricher")
     for name, count in layers.most_common():
-        log_dispatch(project_dir, task=f"enricher_{name}", tokens=count * 50, model="sonnet")
+        log_dispatch(project_dir, task=f"enricher_{name}", tokens=count * 200 + 5000, model=enr_tier)
 
     print(f"\nACTION: Read {skill_dir}/fix-enricher-instructions.md then dispatch 1 Fix Enricher Agent per layer.")
-    print(f"  MODEL: sonnet")
+    print(f"  MODEL: {enr_tier} ({_cfg.model_for('enricher')})")
     print(f"  ROLE: dojutsu-enricher (if agent-mux configured)")
-    print(f"  NOTE: Enrichers must understand code well enough to write correct fixes. Use sonnet, not haiku.")
+    print(f"  NOTE: Enrichers must understand code well enough to write correct fixes.")
     print(f"Each enricher reads findings.jsonl, filters for its layer, adds target_code/fix_plan, writes enriched/.")
     for name, count in layers.most_common():
         print(f"  LAYER: {name} ({count} findings) -> {audit_dir}/data/enriched/{name}.jsonl")
@@ -277,15 +304,18 @@ elif state == "NEEDS_GENERATION":
     findings_count = count_lines("data/findings.jsonl")
 
     print(f"\nFINDINGS: {findings_count}, LAYERS: {len(inv['layers'])}, LOC: {inv['total_loc']}")
+    gen_tier = _cfg.tier_for("layer_generator")
+    hub_tier = _cfg.tier_for("master_hub_generator")
+    xcut_tier = _cfg.tier_for("cross_cutting_generator")
     for name, data in sorted(inv["layers"].items(), key=lambda x: -x[1]["loc"]):
-        log_dispatch(project_dir, task=f"gen_{name}", tokens=data["loc"] * 4, model="sonnet")
-    log_dispatch(project_dir, task="gen_master_hub", tokens=30000, model="opus")
-    log_dispatch(project_dir, task="gen_cross_cutting", tokens=20000, model="sonnet")
+        log_dispatch(project_dir, task=f"gen_{name}", tokens=data["loc"] * 4, model=gen_tier)
+    log_dispatch(project_dir, task="gen_master_hub", tokens=30000, model=hub_tier)
+    log_dispatch(project_dir, task="gen_cross_cutting", tokens=20000, model=xcut_tier)
 
     print(f"\nACTION: Read generator prompts then dispatch generators:")
-    print(f"  MODEL for layer generators: sonnet")
-    print(f"  MODEL for master-hub generator: opus (ONE dispatch — premium writing)")
-    print(f"  MODEL for cross-cutting generator: sonnet")
+    print(f"  MODEL for layer generators: {gen_tier} ({_cfg.model_for('layer_generator')})")
+    print(f"  MODEL for master-hub generator: {hub_tier} ({_cfg.model_for('master_hub_generator')}) (ONE dispatch — premium writing)")
+    print(f"  MODEL for cross-cutting generator: {xcut_tier} ({_cfg.model_for('cross_cutting_generator')})")
     print(f"  ROLES: dojutsu-enricher (layers/cross-cutting), dojutsu-narrator (master-hub)")
     print(f"  {skill_dir}/layer-generator-prompt.md (per layer)")
     print(f"  {skill_dir}/master-hub-generator-prompt.md (1 hub, 300-500 lines)")
