@@ -25,6 +25,7 @@ class PatternDef(TypedDict, total=False):
     target_code: str | None
     confidence: str  # "high" | "medium" | "low"
     confidence_reason: str
+    skip_import_lines: bool
 
 
 class Finding(TypedDict, total=False):
@@ -383,7 +384,8 @@ JAVA_PATTERNS: list[PatternDef] = [
     {"pattern": r"\bList\b[^<]", "rule": "R07", "severity": "MEDIUM", "category": "typing",
      "description": "Raw type without generics bypasses compile-time type safety", "phase": 2,
      "explanation": "Raw types (List instead of List<String>) disable generic type checking. The compiler cannot verify element types, and ClassCastExceptions will occur at runtime instead of being caught at compile time.",
-     "confidence": "high", "confidence_reason": "Raw type without generics (R07)"},
+     "confidence": "high", "confidence_reason": "Raw type without generics (R07)",
+     "skip_import_lines": True},
     {"pattern": r"\bpublic\s+(?:int|long|String|boolean|double|float)\s+\w+\s*;", "rule": "R02", "severity": "MEDIUM", "category": "architecture",
      "description": "Public field should be private with accessor methods", "phase": 3,
      "explanation": "Public fields expose internal state and prevent adding validation, lazy initialization, or change notification later without breaking all callers. Use private fields with getter/setter methods.",
@@ -629,7 +631,13 @@ RUST_PATTERNS: list[PatternDef] = [
 
 # ---- Skip / filter lists -----------------------------------------------------
 
-SKIP_SUBSTRINGS = ("node_modules", ".next", "__tests__", ".test.", ".spec.", "test/")
+# Paths containing these substrings are skipped entirely.
+# Note: "test/" also matches "tests/" since substring matching is used.
+SKIP_SUBSTRINGS = (
+    "node_modules", ".next",
+    "__tests__", ".test.", ".spec.", "test/",
+    "test_", "evaluation/",
+)
 
 COMMENT_FILTER_RULES = ("R09", "R07")
 
@@ -858,6 +866,27 @@ def _is_comment(code_stripped: str) -> bool:
     )
 
 
+_IMPORT_LINE_RE = re.compile(
+    r"^\s*(?:import\b|from\b|require\(|use\b|include\b|#include\b)",
+)
+
+
+def _is_import_line(code_stripped: str) -> bool:
+    """Return True if the line is an import/require/use statement."""
+    return bool(_IMPORT_LINE_RE.match(code_stripped))
+
+
+# innerHTML = "" / innerHTML = '' / innerHTML = `` (clearing DOM content is safe)
+_INNERHTML_CLEAR_RE = re.compile(
+    r'\.innerHTML\s*=\s*(?:""|' + r"''|``)" + r'\s*;?\s*$',
+)
+
+
+def _is_innerhtml_clear(code_stripped: str) -> bool:
+    """Return True if the line is an innerHTML assignment to an empty string."""
+    return bool(_INNERHTML_CLEAR_RE.search(code_stripped))
+
+
 def _run_grep(pattern: str, absolute_paths: list[str]) -> str:
     """Run grep -rnE for *pattern* across *absolute_paths*; return stdout."""
     try:
@@ -968,6 +997,15 @@ def scan_project(
 
             code_stripped = code.strip()
             if pat_def["rule"] in COMMENT_FILTER_RULES and _is_comment(code_stripped):
+                continue
+
+            # Skip import lines for patterns that flag declaration-site usage
+            # (e.g., Java raw type `List` matched in `import java.util.List;`)
+            if pat_def.get("skip_import_lines", False) and _is_import_line(code_stripped):
+                continue
+
+            # innerHTML = "" / '' / `` is safe clearing, not an XSS vector
+            if "innerHTML" in pattern and _is_innerhtml_clear(code_stripped):
                 continue
 
             category = pat_def["category"]
