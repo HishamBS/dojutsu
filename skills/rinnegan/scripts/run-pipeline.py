@@ -364,6 +364,14 @@ elif state == "NEEDS_GENERATION":
     inv = json.load(open(os.path.join(audit_dir, "data/inventory.json")))
     findings_count = count_lines("data/findings.jsonl")
 
+    # Pre-compute ALL statistics deterministically — generators MUST use these, not count themselves
+    try:
+        from compute_audit_stats import write_stats
+        stats_path = write_stats(audit_dir)
+        print(f"AUTO: Pre-computed audit statistics written to {stats_path}")
+    except Exception as e:
+        print(f"WARNING: Could not pre-compute stats: {e}")
+
     print(f"\nFINDINGS: {findings_count}, LAYERS: {len(inv['layers'])}, LOC: {inv['total_loc']}")
     gen_tier = _cfg.tier_for("layer_generator")
     hub_tier = _cfg.tier_for("master_hub_generator")
@@ -377,6 +385,7 @@ elif state == "NEEDS_GENERATION":
     print(f"  MODEL for layer generators: {gen_tier} ({_cfg.model_for('layer_generator')})")
     print(f"  MODEL for master-hub generator: {hub_tier} ({_cfg.model_for('master_hub_generator')}) (ONE dispatch — premium writing)")
     print(f"  MODEL for cross-cutting generator: {xcut_tier} ({_cfg.model_for('cross_cutting_generator')})")
+    print(f"  STATS: {audit_dir}/data/audit-stats.json (USE ONLY THESE NUMBERS — do not count from raw data)")
     print(f"  ROLES: dojutsu-enricher (layers/cross-cutting), dojutsu-narrator (master-hub)")
     print(f"  {skill_dir}/layer-generator-prompt.md (per layer)")
     print(f"  {skill_dir}/master-hub-generator-prompt.md (1 hub, 300-500 lines)")
@@ -384,6 +393,7 @@ elif state == "NEEDS_GENERATION":
     print(f"  {skill_dir}/output-templates.md (for phase/progress/config templates)")
     print(f"  {skill_dir}/finding-schema.md (for JSON Generator task transformation)")
     print(f"\nGenerators read findings.jsonl from disk. Pass AUDIT_DIR + layer name + min lines.")
+    print(f"IMPORTANT: All numbers (severity counts, category totals, dates, quality gate) MUST come from audit-stats.json.")
     for name, data in sorted(inv["layers"].items(), key=lambda x: -x[1]["loc"]):
         min_lines = max(10, data["loc"] * 20 // 1000)
         print(f"  LAYER: {name} ({data['loc']} LOC, {len(data['files'])} files, min {min_lines} lines)")

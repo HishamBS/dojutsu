@@ -1,5 +1,11 @@
 # Cross-Cutting Generator Prompt
 
+## Pre-Computed Statistics (MANDATORY)
+
+Read `[AUDIT_DIR]/data/audit-stats.json` before writing any numbers. Use the `audit_date`
+field for dates, `cross_cutting` object for group counts. Do NOT count or compute
+statistics yourself — all numbers MUST come from this file.
+
 ## Role
 You generate cross-cutting.md -- a document covering violation patterns that span multiple architectural layers.
 

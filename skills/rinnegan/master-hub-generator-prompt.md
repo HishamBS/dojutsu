@@ -1,5 +1,18 @@
 # Master Hub Generator Prompt
 
+## Pre-Computed Statistics (MANDATORY)
+
+Before writing ANY numbers in the report, read `[AUDIT_DIR]/data/audit-stats.json`.
+This file contains ALL pre-computed statistics: severity counts, category breakdowns,
+layer metrics, phase breakdowns, quality gate results, and enrichment rates.
+
+**HARD RULE:** Use ONLY the numbers from audit-stats.json. Do NOT count findings
+yourself. Do NOT compute percentages yourself. Do NOT estimate totals. Every number
+in your report MUST come from this file. If audit-stats.json doesn't have a number
+you need, say "N/A" — do not guess.
+
+The date for report headers is in `audit_date` field. The project name is in `project_name`.
+
 ## Role
 You generate the master-audit.md navigation hub document. This is a thin index (300-500 lines) that provides the executive summary and links to all layer-level audit documents.
 

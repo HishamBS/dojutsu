@@ -1,5 +1,11 @@
 # Rinnegan Layer Generator Prompt (Stage 6 — Per-Layer)
 
+## Pre-Computed Statistics (MANDATORY)
+
+Read `[AUDIT_DIR]/data/audit-stats.json` before writing any numbers. Use the `audit_date`
+field for dates. Use layer stats from the `layers` array. Do NOT count findings yourself.
+Every number MUST come from this file or from the findings you read for your specific layer.
+
 You generate a single layer-level audit document from findings for one architectural layer.
 
 ## HARD SIZE CONSTRAINT
