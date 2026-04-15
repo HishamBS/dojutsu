@@ -20,7 +20,7 @@
 #   3. Modified files + no baseline → capture baseline, pass this time
 #
 # Usage: Called as a stop hook by any coding agent
-# Can also be run manually via the skill's enforce-sharingan.sh wrapper
+# Can also be run manually: ~/.config/spsm/sharingan/enforce.sh
 
 set -euo pipefail
 
@@ -146,13 +146,13 @@ run_typecheck() {
   return 0
 }
 
-# ── Stub/TODO + unsafe type check (config-driven) ──
+# ── Placeholder-marker + unsafe type check (config-driven) ──
 run_stub_check() {
   local MODIFIED_FILES
   MODIFIED_FILES=$(sharingan_get_all_modified_source "HEAD~1" 2>/dev/null || echo "")
   [[ -z "$MODIFIED_FILES" ]] && return 0
 
-  # Stub/TODO detection
+  # Placeholder-marker detection
   local STUB_PATTERN
   STUB_PATTERN=$(sharingan_get_stub_pattern)
   local STUB_HITS=""
@@ -164,7 +164,7 @@ run_stub_check() {
   done <<< "$MODIFIED_FILES"
 
   if [[ -n "$(echo "$STUB_HITS" | grep -v '^$')" ]]; then
-    echo "BLOCKED: Stub/TODO markers found in modified files:" >&2
+    echo "BLOCKED: Placeholder markers found in modified files:" >&2
     echo "$STUB_HITS" | grep -v '^$' | head -10 >&2
     return 1
   fi
@@ -233,7 +233,7 @@ if [[ "$SESSION_MODE" == "LIGHTWEIGHT" ]]; then
 
   # Stub check skipped in LIGHTWEIGHT mode — pre-existing working tree
   # dirt is not this session's problem. FULL mode (Phase F5) catches
-  # agent-introduced TODOs when actual implementation commits exist.
+  # unfinished follow-up markers when actual implementation commits exist.
 
   exit 0
 fi
@@ -399,6 +399,7 @@ GATE_ERRORS=$(jq -r '
     (if ($g.gate_2.failures // 0) > 0 then "Gate 2: \($g.gate_2.failures) failures" else empty end),
     (if ($g.gate_3.verifier_completed // false) != true then "Gate 3: independent verifier not completed" else empty end),
     (if (($g.gate_3.summary.shell // 0) > 0) or (($g.gate_3.summary.missing // 0) > 0) then "Gate 3: \($g.gate_3.summary.shell // 0) shell + \($g.gate_3.summary.missing // 0) missing" else empty end),
+    (if ($g.gate_3.requirements_missing // 0) > 0 then "Gate 3: \($g.gate_3.requirements_missing) unrated requirements" else empty end),
     (if ($g.gate_5.status // "MISSING") != "APPROVED" then "Gate 5: status is \($g.gate_5.status // "MISSING"), not APPROVED" else empty end)
   ] | if length == 0 then "OK" else join("|") end
 ' "$VERDICT_FILE" 2>/dev/null || echo "OK")

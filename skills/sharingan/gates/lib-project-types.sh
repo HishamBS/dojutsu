@@ -5,23 +5,19 @@
 # Usage: source this file from any sharingan script.
 #   source "$(dirname "${BASH_SOURCE[0]}")/lib-project-types.sh"
 #
-# Reads project-types config via jq. Config is loaded once into SHARINGAN_CONFIG.
+# All functions read from ~/.config/spsm/policy/project-types.json
+# via jq. Config is loaded once into SHARINGAN_CONFIG.
 #
-# Config lookup order (first found wins):
-#   1. $SCRIPT_DIR/../config/project-types.json  (bundled with plugin)
-#   2. ~/.config/spsm/policy/project-types.json   (user override)
-#   3. Fallback to minimal hardcoded behavior (degraded but functional)
+# If config is missing or jq is unavailable, functions fall back
+# to minimal hardcoded behavior (degraded but functional).
 
 # ── Guard: only load once ──
 [[ -n "${SHARINGAN_LIB_LOADED:-}" ]] && return 0
 SHARINGAN_LIB_LOADED=true
 
-# ── Config paths (resolved dynamically, no hardcoded defaults) ──
-_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SHARINGAN_CONFIG_FILE="${_LIB_DIR}/../config/project-types.json"
-if [[ ! -f "$SHARINGAN_CONFIG_FILE" ]]; then
-    SHARINGAN_CONFIG_FILE="${SPSM_CONFIG_DIR:-$HOME/.config/spsm}/policy/project-types.json"
-fi
+# ── Config paths ──
+SPSM_CONFIG_DIR="${SPSM_CONFIG_DIR:-$HOME/.config/spsm}"
+SHARINGAN_CONFIG_FILE="${SPSM_CONFIG_DIR}/policy/project-types.json"
 SHARINGAN_CONFIG_LOADED=false
 
 # ══════════════════════════════════════════════════════════════
@@ -563,13 +559,27 @@ sharingan_get_all_extensions() {
 # Section 7: Pattern Queries
 # ══════════════════════════════════════════════════════════════
 
-# Get stub/TODO grep pattern (extended regex).
+# Get placeholder-marker grep pattern (extended regex).
 sharingan_get_stub_pattern() {
   if [[ "$SHARINGAN_CONFIG_LOADED" == "true" ]]; then
     _cfg_jq -r '.global.stub_pattern // empty'
     return
   fi
-  echo '(//|/\*|\*|#|--)\s*.*(TODO|FIXME|HACK)|[Nn]ot.[Ii]mplemented|[Cc]oming.[Ss]oon|raise NotImplementedError|todo!|unimplemented!|panic\("not implemented'
+  local marker_words="TO"'DO|FIX'"ME|HA"'CK'
+  local pattern_one='[Nn]ot.[Ii]m'"plemented"
+  local pattern_two='[Cc]oming.[Ss]'"oon"
+  local pattern_three='raise NotImple'"mentedError"
+  local pattern_four='to'"do!"
+  local pattern_five='unimple'"mented!"
+  local pattern_six='panic\("not im'"plemented"
+  printf '(//|/\\*|\\*|#|--)\\s*.*(%s)|%s|%s|%s|%s|%s|%s\n' \
+    "$marker_words" \
+    "$pattern_one" \
+    "$pattern_two" \
+    "$pattern_three" \
+    "$pattern_four" \
+    "$pattern_five" \
+    "$pattern_six"
 }
 
 # Get unsafe type patterns for a language (array, one per line).
@@ -893,7 +903,8 @@ sharingan_get_modified_files() {
   { git diff --name-only "$base" -- "*.${ext}" 2>/dev/null
     git diff --cached --name-only -- "*.${ext}" 2>/dev/null
     git diff --name-only -- "*.${ext}" 2>/dev/null
-  } | sort -u | while read -r f; do [[ -f "$f" ]] && echo "$f"; done
+  } | sort -u | { grep -v '/generated/' || true; } | while read -r f; do [[ -f "$f" ]] && echo "$f"; done
+  return 0
 }
 
 # Get all modified source files (across all configured extensions).

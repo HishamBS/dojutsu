@@ -37,9 +37,7 @@ load_capability_value() {
 }
 
 # ── Read engine+model from SSOT (NEVER hardcode — matches SPSM pipeline pattern) ──
-# Look for agent capabilities: skill-local first, then user config, then defaults
-AGENT_CAPS="${SCRIPT_DIR}/../config/agent-capabilities.yaml"
-[[ ! -f "$AGENT_CAPS" ]] && AGENT_CAPS="${HOME}/.config/spsm/policy/agent-capabilities.yaml"
+AGENT_CAPS="${HOME}/.config/spsm/policy/agent-capabilities.yaml"
 SSOT_ENGINE=""
 SSOT_MODEL=""
 if [[ -f "$AGENT_CAPS" ]]; then

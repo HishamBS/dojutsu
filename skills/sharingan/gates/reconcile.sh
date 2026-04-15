@@ -111,6 +111,14 @@ if os.path.exists(runtime_file):
 # Reconcile
 issues = []
 all_reqs = set(list(builder_claims.keys()) + list(verifier_ratings.keys()))
+expected_verifier_ids = sorted(
+    req_id for req_id, claim in builder_claims.items()
+    if claim.get('status') == 'VERIFIED'
+)
+missing_verifier_ids = [
+    req_id for req_id in expected_verifier_ids
+    if req_id not in verifier_ratings
+]
 
 for req_id in sorted(all_reqs):
     builder = builder_claims.get(req_id, {})
@@ -146,6 +154,16 @@ if shell_count > 0 or missing_count > 0:
     blocked = True
     blocked_at = blocked_at or "gate_3"
     remaining.append(f"Verifier found {shell_count} shells, {missing_count} missing")
+
+if missing_verifier_ids:
+    blocked = True
+    blocked_at = blocked_at or "gate_3"
+    missing_preview = ", ".join(missing_verifier_ids[:10])
+    remaining.append(
+        "Verifier did not rate all required items: "
+        f"{len(missing_verifier_ids)}/{len(expected_verifier_ids)} missing"
+        + (f" ({missing_preview})" if missing_preview else "")
+    )
 
 if runtime_failures > 0:
     blocked = True
@@ -207,7 +225,10 @@ else:
                 "verifier_completed": True,
                 "engine": verifier_engine,
                 "model": verifier_model,
-                "summary": verifier_summary
+                "summary": verifier_summary,
+                "requirements_expected": len(expected_verifier_ids),
+                "requirements_rated": len(verifier_ratings),
+                "requirements_missing": len(missing_verifier_ids),
             },
             "gate_4": {
                 "status": "PASS" if not runtime_file or runtime_failures == 0 else "FAIL",
