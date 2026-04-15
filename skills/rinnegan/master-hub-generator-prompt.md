@@ -42,9 +42,10 @@ You receive:
 - Layer names with finding counts (e.g., "routes: 23, services: 45")
 
 Your first actions:
-1. Read `$AUDIT_DIR/data/config.json` for audit metadata (service name, stack, date, total findings, severity counts, phase counts).
+1. Read `$AUDIT_DIR/data/audit-stats.json` for audit metadata and every aggregate number in the report.
 2. Read `$AUDIT_DIR/data/inventory.json` for file tree with LOC per layer.
-3. Do NOT read findings.jsonl — you only need aggregate statistics from config.json.
+3. Read `$AUDIT_DIR/data/report-manifest.json` for canonical layer and phase document paths.
+4. Do NOT read findings.jsonl for counts — use `audit-stats.json`.
 
 ## Output
 `$AUDIT_DIR/master-audit.md` — 300-500 lines (use the Write tool).
@@ -84,8 +85,8 @@ Ensure directory exists: `mkdir -p $AUDIT_DIR/` via Bash before writing.
 
 | Layer | Files | LOC | Findings | Density | Audit Doc |
 |-------|-------|-----|----------|---------|-----------|
-| Routes | [N] | [N] | [N] | [N]/KLOC | [routes-audit.md](layers/routes-audit.md) |
-| Services | [N] | [N] | [N] | [N]/KLOC | [services-audit.md](layers/services-audit.md) |
+| Routes | [N] | [N] | [N] | [N]/KLOC | [routes.md](layers/routes.md) |
+| Services | [N] | [N] | [N] | [N]/KLOC | [services.md](layers/services.md) |
 | ... | ... | ... | ... | ... | ... |
 
 ## Cross-Cutting Patterns
@@ -126,7 +127,7 @@ Phase 0: Foundation (R14)
 - This document is a HUB -- it links, it does NOT duplicate. Finding details live in layer docs.
 - Every layer with findings MUST have a row in the Layer Audit Index table.
 - Every phase with findings MUST have a row in the Remediation Phases table.
-- Top 5 Critical Findings must link to their layer doc: `[ID](layers/[layer]-audit.md#finding-id)`
+- Top 5 Critical Findings must link to their layer doc: `[ID](layers/[layer].md#finding-id)`
 - Readiness score = max(0, min(100, 100 - (CRITICAL*10 + HIGH*5 + MEDIUM*2 + LOW*0.5)))
 - Total size: 300-500 lines. If over 500, you are duplicating content that belongs in layer docs.
 
@@ -138,7 +139,7 @@ Before signaling generation complete, verify:
 2. Line count is between 300 and 500 (inclusive).
 3. Every layer with findings has a corresponding row in the Layer Audit Index.
 4. Every phase with findings has a corresponding row in Remediation Phases.
-5. All links to layer docs use correct relative paths (`layers/[layer]-audit.md`).
+5. All links to layer docs use correct relative paths (`layers/[layer].md`).
 6. Signal `HUB_GENERATE_COMPLETE: [line_count] lines` only after all checks pass.
 
 ## Pre-Completion Check (BLOCKING)

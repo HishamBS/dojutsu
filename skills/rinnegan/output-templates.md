@@ -48,8 +48,8 @@ master-audit.md is a thin navigation hub (300-500 lines). Finding details live i
 
 ### Top 5 Critical Findings
 
-1. **[{{ID_1}}](layers/{{LAYER_1}}-audit.md#{{ID_1_ANCHOR}})** `{{FILE_1}}:{{LINE_1}}` -- {{DESC_1}}
-2. **[{{ID_2}}](layers/{{LAYER_2}}-audit.md#{{ID_2_ANCHOR}})** `{{FILE_2}}:{{LINE_2}}` -- {{DESC_2}}
+1. **[{{ID_1}}](layers/{{LAYER_1}}.md#{{ID_1_ANCHOR}})** `{{FILE_1}}:{{LINE_1}}` -- {{DESC_1}}
+2. **[{{ID_2}}](layers/{{LAYER_2}}.md#{{ID_2_ANCHOR}})** `{{FILE_2}}:{{LINE_2}}` -- {{DESC_2}}
 3. ...
 
 ### Category Breakdown
@@ -72,7 +72,7 @@ master-audit.md is a thin navigation hub (300-500 lines). Finding details live i
 
 | Layer | Files | LOC | Findings | Density | Audit Doc |
 |-------|-------|-----|----------|---------|-----------|
-| {{LAYER_NAME}} | {{FILES}} | {{LOC}} | {{FINDINGS}} | {{DENSITY}}/KLOC | [{{LAYER_NAME}}-audit.md](layers/{{LAYER_NAME}}-audit.md) |
+| {{LAYER_NAME}} | {{FILES}} | {{LOC}} | {{FINDINGS}} | {{DENSITY}}/KLOC | [{{LAYER_NAME}}.md](layers/{{LAYER_NAME}}.md) |
 | ... | ... | ... | ... | ... | ... |
 
 ## Cross-Cutting Patterns
@@ -121,7 +121,7 @@ Phase 0: Foundation (R14) .............. {{P0_COUNT}} findings
 
 ---
 
-## 1b. layers/[layer]-audit.md (Per-Layer Deep Dive)
+## 1b. layers/[layer].md (Per-Layer Deep Dive)
 
 One file per architectural layer, generated in parallel. Each layer doc contains ALL finding details for that layer.
 
@@ -218,14 +218,14 @@ Covers violation patterns spanning multiple layers.
 docs/audit/
   master-audit.md              # Navigation hub: exec summary, severity heatmap, layer links
   layers/                      # Per-layer deep-dives (parallel-generated)
-    routes-audit.md            # All findings for routes layer
-    services-audit.md          # All findings for services layer
-    components-audit.md        # etc.
-    hooks-audit.md
-    types-audit.md
-    stores-audit.md
-    config-audit.md
-    infrastructure-audit.md
+    routes.md                  # All findings for routes layer
+    services.md                # All findings for services layer
+    components.md              # etc.
+    hooks.md
+    types.md
+    stores.md
+    config.md
+    infrastructure.md
     ...                        # One per layer from inventory
   cross-cutting.md             # Patterns spanning multiple layers
   progress.md                  # Phase tracker
@@ -238,7 +238,8 @@ docs/audit/
     findings.jsonl
     inventory.json
     phase-dag.json
-    config.json
+    audit-stats.json
+    report-manifest.json
   data/tasks/                  # Per-phase task arrays
     phase-0-tasks.json
     phase-1-tasks.json

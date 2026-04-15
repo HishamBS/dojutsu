@@ -58,6 +58,7 @@ Each finding is one JSON object per line in `findings.jsonl`:
 | `layer` | Yes | string | Architectural layer this file belongs to (from inventory) |
 | `scanner` | Yes | string | Which scanner produced this finding |
 | `search_pattern` | Yes | string | Grep-able pattern that identifies this violation (e.g., "verify=False"). Used by Rasengan for stale-fix detection when line numbers shift. |
+| `cluster_id` | No | string | Deterministic cluster identifier assigned by Byakugan after clustering. Published findings must carry this once `deep/clusters.json` exists. |
 | `completed_at` | No | string | ISO timestamp when Rasengan resolved this task. Null until resolved. |
 | `resolution` | No | string | How Rasengan resolved: `applied` / `line-shifted` / `already_resolved` / `skipped` / `failed`. Null until resolved. |
 | `actual_line` | No | int | If line shifted from original, the actual line where fix was applied. Null if no shift. |
@@ -91,7 +92,7 @@ Every finding MUST have EITHER `target_code` OR `fix_plan` populated. Both null 
 | Truly ambiguous architectural decision | Both null + severity REVIEW | "Should this module be split into microservices?" |
 
 `target_code` null is ONLY acceptable when `fix_plan` is provided OR severity is REVIEW.
-Scanners producing >5% of findings with BOTH null = low-quality output requiring re-dispatch.
+Any non-zero count of non-REVIEW findings with BOTH fields null blocks phase generation and publication. The percentage is diagnostic only.
 
 ### fix_plan Schema
 
@@ -177,7 +178,7 @@ When a finding involves multiple rules, assign to the LOWEST phase number (fix t
 
 ## Finding to Task Transformation
 
-When the JSON Generator creates `data/tasks/phase-N-tasks.json`, it transforms each finding from `findings.jsonl` as follows:
+When `scripts/create-phase-tasks.py` creates `data/tasks/phase-N-tasks.json`, it transforms each finding from `findings.jsonl` as follows:
 
 | Finding Field | Task Field | Transformation |
 |---------------|------------|----------------|
@@ -193,14 +194,14 @@ When the JSON Generator creates `data/tasks/phase-N-tasks.json`, it transforms e
 | `explanation` | `explanation` | Direct copy |
 | `effort` | `effort` | Direct copy |
 | `fix_plan` | `fix_plan` | Direct copy (array of step objects, may be null) |
-| `group` | `group` | Direct copy (from aggregation) |
+| `cross_cutting_group` | — | Do not copy to tasks. This field stays on published findings only. |
 | — | `status` | Initialize to `"pending"` |
 | — | `completed_at` | Initialize to `null` |
 | — | `resolution` | Initialize to `null` |
 | — | `actual_line` | Initialize to `null` |
 | — | `notes` | Initialize to `""` |
 
-Fields NOT copied to tasks: `category`, `end_line`, `snippet` (snippet is for human display; `current_code` is for machine use), `scanner`, `layer`, `phase` (already grouped by phase), `cross_cutting`.
+Fields NOT copied to tasks: `category`, `end_line`, `snippet` (snippet is for human display; `current_code` is for machine use), `scanner`, `layer`, `phase` (already grouped by phase), `cross_cutting`, `cross_cutting_group`, `cluster_id`.
 
 ## Verification Command Specification
 
@@ -320,37 +321,14 @@ Task status values: `pending` | `in_progress` | `completed` | `blocked` | `skipp
 
 ```json
 {
-  "service": "orchestrator",
   "stack": "python",
   "framework": "fastapi",
-  "date": "2026-03-15",
-  "total_files": 129,
-  "total_loc": 19068,
-  "rules_applied": ["R01","R02","R03","R04","R05","R07","R08","R09","R10","R11","R12","R13","R14","R16"],
-  "custom_rules": [],
-  "total_findings": 176,
-  "severity_counts": {"CRITICAL": 22, "HIGH": 58, "MEDIUM": 88, "LOW": 8},
-  "density_per_kloc": 9.2
+  "framework_version": "3.0",
+  "project": "orchestrator"
 }
 ```
 
-### Readiness Calculation Formula
-
-```
-readiness_pct = 100 - (
-  (critical_count * 10) +
-  (high_count * 3) +
-  (medium_count * 1) +
-  (low_count * 0.2)
-) / max(total_loc_kloc, 1)
-
-readiness_pct = max(0, min(100, round(readiness_pct, 1)))
-```
-
-Example: 9 CRITICAL + 281 HIGH + 720 MEDIUM + 353 LOW on 116 KLOC:
-= 100 - (90 + 843 + 720 + 70.6) / 116 = 100 - 14.9 = **85.1%**
-
-This value is written to `config.json` as `readiness_pct` by the aggregator.
+`config.json` is metadata-only. Aggregate counts, readiness, layer totals, and phase totals belong exclusively in `audit-stats.json`.
 
 ## inventory.json Schema
 

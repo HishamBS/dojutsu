@@ -459,27 +459,30 @@ class TestScannerBreakdown:
             assert r07["count"] == 1
 
 
-# -- Config / Dedup -----------------------------------------------------------
+# -- Config / Metadata --------------------------------------------------------
 
 
-class TestConfigDedup:
-    """Verify dedup info is pulled from config.json."""
+class TestConfigMetadata:
+    """Verify config.json is metadata-only for stats generation."""
 
-    def test_dedup_from_config(self) -> None:
+    def test_stack_and_framework_can_come_from_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             audit_dir = _build_minimal_fixture(tmp)
             _write_config(audit_dir, {
-                "project": "backend",
+                "stack": "typescript",
+                "framework": "react",
+            })
+            stats = compute_stats(audit_dir)
+            assert stats["stack"] == "typescript"
+            assert stats["framework"] == "react"
+
+    def test_counts_ignore_config_aggregates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            audit_dir = _build_minimal_fixture(tmp)
+            _write_config(audit_dir, {
                 "total_findings": 60,
                 "deduped_count": 5,
             })
-            stats = compute_stats(audit_dir)
-            assert stats["dedup_count"] == 5
-            assert stats["total_raw_findings"] == 60
-
-    def test_no_config_defaults(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            audit_dir = _build_minimal_fixture(tmp)
             stats = compute_stats(audit_dir)
             assert stats["dedup_count"] == 0
             assert stats["total_raw_findings"] == 5  # same as total_findings

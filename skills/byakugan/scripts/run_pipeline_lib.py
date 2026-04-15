@@ -21,6 +21,23 @@ try:
 except ImportError:
     def log_dispatch(*a, **kw): pass
 
+try:
+    from merge_impact_analysis import impact_output_status, merge_impact_analysis_outputs
+except ImportError:
+    def impact_output_status(_project_dir: str) -> dict:
+        return {
+            "parts_dir": "",
+            "expected_clusters": [],
+            "completed_clusters": [],
+            "missing_clusters": [],
+            "invalid_parts": [],
+            "complete": False,
+            "merge_needed": False,
+        }
+
+    def merge_impact_analysis_outputs(_project_dir: str) -> dict:
+        raise ValueError("merge_impact_analysis unavailable")
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -45,7 +62,12 @@ def get_state(project_dir: str) -> str:
         return "NEEDS_CLUSTERING"
 
     # Step 3: Impact analysis (LLM agents)
+    impact_status = impact_output_status(project_dir)
+    if impact_status.get("merge_needed", False):
+        return "NEEDS_IMPACT_MERGE"
     if not os.path.exists(os.path.join(deep_dir, "impact-analysis.jsonl")):
+        if impact_status["complete"]:
+            return "NEEDS_IMPACT_MERGE"
         return "NEEDS_IMPACT_ANALYSIS"
 
     # Step 4: Narrative (LLM)
@@ -129,6 +151,19 @@ def run_pipeline(project_dir: str) -> int:
             return rc
         state = get_state(project_dir)
 
+    if state == "NEEDS_IMPACT_MERGE":
+        print("AUTO: Merging impact-analysis parts...")
+        try:
+            manifest = merge_impact_analysis_outputs(project_dir)
+        except ValueError as exc:
+            print(f"ERROR: {exc}")
+            return 1
+        print(
+            "AUTO: Wrote impact-analysis.jsonl "
+            f"({manifest['merged_findings']} findings from {len(manifest['completed_clusters'])} clusters)"
+        )
+        state = get_state(project_dir)
+
     # Output state + action
     print(f"\nSTATE: {state}")
     print(f"AUDIT_DIR: {audit_dir}")
@@ -147,6 +182,9 @@ def run_pipeline(project_dir: str) -> int:
         clusters_path = os.path.join(deep_dir, "clusters.json")
         dep_graph_path = os.path.join(deep_dir, "dependency-graph.json")
         findings_path = os.path.join(audit_dir, "data/findings.jsonl")
+        impact_status = impact_output_status(project_dir)
+        parts_dir = impact_status["parts_dir"]
+        os.makedirs(parts_dir, exist_ok=True)
 
         with open(clusters_path) as f:
             clusters = json.load(f)
@@ -159,10 +197,19 @@ def run_pipeline(project_dir: str) -> int:
         print(f"  MODEL: sonnet")
         print(f"  ROLE: dojutsu-analyst (if agent-mux configured)")
         print(f"  Each agent receives: cluster definition + dependency graph edges + findings JSONL")
-        print(f"  Dispatch up to 5 agents in parallel. Each handles 5-10 clusters.")
-        print(f"  Large clusters (>10 findings) get their own agent.")
-        print(f"  After ALL agents complete, merge output to: {deep_dir}/impact-analysis.jsonl")
-        print(f"  Then run this script again.")
+        print(f"  Dispatch up to 5 agents in parallel. Each handles one cluster JSON output file.")
+        print(f"  Large clusters (>10 findings) still get their own agent.")
+        print(f"  Write each result to: {parts_dir}/<CLUSTER_ID>.json")
+        print(f"  Re-run this script after each batch. It auto-merges when all cluster files exist.")
+        if impact_status["completed_clusters"]:
+            print(
+                f"  Resumption: {len(impact_status['completed_clusters'])}/{len(impact_status['expected_clusters'])} "
+                "cluster files already on disk."
+            )
+        if impact_status["invalid_parts"]:
+            print(f"  INVALID PARTS: {', '.join(impact_status['invalid_parts'])}")
+        if impact_status["missing_clusters"]:
+            print(f"  PENDING CLUSTERS: {', '.join(impact_status['missing_clusters'][:10])}")
         print()
 
         # List clusters for dispatch

@@ -63,14 +63,11 @@ def _write_findings(tmp_dir: str, findings: list[dict]) -> str:
 
 # -- Tests ---------------------------------------------------------------------
 
-NULL_FIX_THRESHOLD = 5.0  # percent
-
-
-class TestNullFixValidationAboveThreshold:
-    """Cases where >5% of non-REVIEW findings lack both target_code and fix_plan."""
+class TestNullFixValidationFailures:
+    """Cases where any non-REVIEW finding lacks both target_code and fix_plan."""
 
     def test_all_non_review_findings_have_null_fixes(self) -> None:
-        """100% null-fix rate on non-REVIEW findings should warn."""
+        """Any non-REVIEW null-fix should block."""
         with tempfile.TemporaryDirectory() as tmp:
             findings = [
                 _make_finding("T-001", severity="HIGH"),
@@ -85,7 +82,7 @@ class TestNullFixValidationAboveThreshold:
             assert result["percent"] == pytest.approx(100.0)
 
     def test_above_threshold_mixed(self) -> None:
-        """10 non-REVIEW, 2 with null fixes = 20% -> warn."""
+        """Mixed valid/invalid findings still block when any invalid finding exists."""
         with tempfile.TemporaryDirectory() as tmp:
             good = [
                 _make_finding(f"G-{i:03d}", severity="HIGH", target_code="fix()")
@@ -103,8 +100,8 @@ class TestNullFixValidationAboveThreshold:
             assert result["percent"] == pytest.approx(20.0)
 
 
-class TestNullFixValidationBelowThreshold:
-    """Cases where <=5% of non-REVIEW findings lack fixes -- no warning."""
+class TestNullFixValidationPassingCases:
+    """Cases where all non-REVIEW findings carry target_code or fix_plan."""
 
     def test_all_findings_have_target_code(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -128,8 +125,8 @@ class TestNullFixValidationBelowThreshold:
             result = validate_null_fix_coverage(audit_dir)
             assert not result["triggered"]
 
-    def test_exactly_at_threshold(self) -> None:
-        """5% exactly should NOT trigger (threshold is >5%)."""
+    def test_single_invalid_finding_still_triggers(self) -> None:
+        """A single invalid non-REVIEW finding is enough to fail the contract."""
         with tempfile.TemporaryDirectory() as tmp:
             good = [
                 _make_finding(f"G-{i:03d}", severity="HIGH", target_code="fix()")
@@ -141,7 +138,7 @@ class TestNullFixValidationBelowThreshold:
             assert result["non_review_count"] == 20
             assert result["null_fix_count"] == 1
             assert result["percent"] == pytest.approx(5.0)
-            assert not result["triggered"]
+            assert result["triggered"]
 
 
 class TestNullFixValidationReviewExclusion:

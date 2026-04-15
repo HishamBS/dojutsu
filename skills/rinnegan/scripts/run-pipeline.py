@@ -22,6 +22,12 @@ from output_validator import (
     validate_aggregation_completeness,
     validate_enrichment_completeness,
 )
+from report_contract import (
+    canonical_phase_doc_relpath,
+    generate_phase_docs,
+    generate_report_manifest,
+    validate_publication_contract,
+)
 
 _cfg = DojutsuConfig()
 
@@ -51,9 +57,13 @@ def run_script(name, *args):
     return result.returncode
 
 def get_state():
-    # Check for quality gates before anything else
+    # Check for quality gates before anything else.
+    # Accept either the pre-commit framework (.pre-commit-config.yaml) or
+    # a Husky-based setup (.husky/pre-commit). The setup-quality-gates skill
+    # lists Biome + Husky as the preferred toolchain for TS/Bun projects.
     pre_commit = os.path.join(project_dir, ".pre-commit-config.yaml")
-    if not os.path.exists(pre_commit):
+    husky_hook = os.path.join(project_dir, ".husky", "pre-commit")
+    if not (os.path.exists(pre_commit) or os.path.exists(husky_hook)):
         return "NEEDS_QUALITY_GATES"
     if not file_exists("data/inventory.json"):
         return "NEEDS_INVENTORY"
@@ -92,6 +102,8 @@ def get_state():
     )
     if incomplete_layers:
         return "NEEDS_ENRICHMENT"
+    if validate_null_fix_coverage(audit_dir)["triggered"]:
+        return "BLOCKED_NULL_FIX"
     if not file_exists("data/phase-dag.json"):
         return "NEEDS_PHASES"
     if not file_exists("master-audit.md"):
@@ -110,6 +122,14 @@ def get_state():
     # Check task files exist
     if not glob.glob(os.path.join(audit_dir, "data/tasks/phase-*-tasks.json")):
         return "NEEDS_PHASES"
+    phase_doc_paths = [os.path.join(audit_dir, canonical_phase_doc_relpath(i)) for i in range(11)]
+    if not all(os.path.isfile(path) for path in phase_doc_paths):
+        return "NEEDS_GENERATION"
+    if not file_exists("data/audit-stats.json") or not file_exists("data/report-manifest.json"):
+        return "NEEDS_GENERATION"
+    publication = validate_publication_contract(audit_dir, stage="rinnegan")
+    if not publication["ok"]:
+        return "NEEDS_GENERATION"
     return "COMPLETE"
 
 # Auto-advance deterministic steps
@@ -118,10 +138,23 @@ state = get_state()
 if state == "NEEDS_QUALITY_GATES":
     print(f"\nSTATE: NEEDS_QUALITY_GATES")
     print(f"\nQuality gate enforcement is required before auditing.")
-    print(f"No .pre-commit-config.yaml found in {project_dir}")
+    print(f"No .pre-commit-config.yaml or .husky/pre-commit found in {project_dir}")
     print(f"\nACTION: Run /setup-quality-gates on this project first.")
     print(f"  This sets up pre-commit hooks, linting, formatting, and type-checking")
     print(f"  for the detected stack. Once complete, re-run /rinnegan.")
+    sys.exit(0)
+
+if state == "BLOCKED_NULL_FIX":
+    nfv = validate_null_fix_coverage(audit_dir)
+    print(f"\nSTATE: BLOCKED_NULL_FIX")
+    print(f"AUDIT_DIR: {audit_dir}")
+    print(f"SKILL_DIR: {skill_dir}")
+    print(f"PROJECT_DIR: {project_dir}")
+    print(f"\nBLOCKED: {nfv['null_fix_count']}/{nfv['non_review_count']} non-REVIEW findings "
+          f"({nfv['percent']:.1f}%) have BOTH target_code and fix_plan null.")
+    print(f"Per finding-schema.md this is invalid published data. Phase task generation is blocked.")
+    print(f"\nACTION: Re-dispatch enrichers, merge enriched output, then re-run /rinnegan.")
+    print(f"  Inspect with: grep -n '\"target_code\": null' {audit_dir}/data/findings.jsonl")
     sys.exit(0)
 
 if state == "NEEDS_INVENTORY":
@@ -329,21 +362,14 @@ elif state == "NEEDS_ENRICHMENT":
         print(f"Then run this script again.")
 
 elif state == "NEEDS_PHASES":
-    # Null-fix validation gate: check enrichment quality before proceeding
-    nfv = validate_null_fix_coverage(audit_dir)
-    if nfv["triggered"]:
-        print(f"\nWARNING: NULL_FIX_VALIDATION_FAILED")
-        print(f"  {nfv['null_fix_count']}/{nfv['non_review_count']} non-REVIEW findings "
-              f"({nfv['percent']:.1f}%) have BOTH target_code and fix_plan null.")
-        print(f"  Threshold: >5%. Per finding-schema.md: both null on non-REVIEW = scanner failure.")
-        print(f"  SUGGESTED ACTION: Re-dispatch enrichers for layers with high null-fix rates.")
-        print(f"  To inspect: grep -c '\"target_code\":null' {audit_dir}/data/findings.jsonl")
-        print(f"  Fix the enrichment before proceeding to phase generation.\n")
-
     # Deterministic generation: DAG and config are spec-fixed, never LLM-generated
     dag, rasengan_cfg = generate_dag_and_config(audit_dir, project_dir)
     print(f"\nAUTO: Wrote phase-dag.json ({len(dag['edges'])} edges, {len(dag['nodes'])} nodes)")
     print(f"AUTO: Wrote rasengan-config.json ({len(rasengan_cfg)} fields)")
+    rc = run_script("create-phase-tasks.py", audit_dir, project_dir)
+    if rc != 0:
+        sys.exit(rc)
+    print("AUTO: Wrote canonical phase task files")
 
     # Quality gate evaluation (deterministic)
     gate_result = evaluate_quality_gate_from_audit(audit_dir)
@@ -354,10 +380,8 @@ elif state == "NEEDS_PHASES":
 
     findings_count = count_lines("data/findings.jsonl")
     print(f"\nFINDINGS: {findings_count}")
-    print(f"\nACTION: Create task files for each phase.")
-    print(f"  Read {skill_dir}/finding-schema.md for the task file schema.")
-    print(f"  Create {audit_dir}/data/tasks/phase-N-tasks.json for each phase with findings.")
-    print(f"  phase-dag.json and rasengan-config.json are already written (deterministic).")
+    print(f"\nACTION: Phase DAG, config, and task files are now on disk.")
+    print(f"  Next run advances to report generation using the deterministic task files.")
     print(f"Then run this script again.")
 
 elif state == "NEEDS_GENERATION":
@@ -371,6 +395,18 @@ elif state == "NEEDS_GENERATION":
         print(f"AUTO: Pre-computed audit statistics written to {stats_path}")
     except Exception as e:
         print(f"WARNING: Could not pre-compute stats: {e}")
+
+    try:
+        generated_phase_docs = generate_phase_docs(audit_dir)
+        print(f"AUTO: Generated {len(generated_phase_docs)} canonical phase docs")
+    except Exception as e:
+        print(f"WARNING: Could not generate phase docs: {e}")
+
+    try:
+        generate_report_manifest(audit_dir)
+        print("AUTO: Wrote report-manifest.json")
+    except Exception as e:
+        print(f"WARNING: Could not write report-manifest.json: {e}")
 
     print(f"\nFINDINGS: {findings_count}, LAYERS: {len(inv['layers'])}, LOC: {inv['total_loc']}")
     gen_tier = _cfg.tier_for("layer_generator")
@@ -413,6 +449,7 @@ elif state == "COMPLETE":
     print(f"  Fix coverage: {has_fix}/{findings_count} ({has_fix*100//max(findings_count,1)}%)")
     print(f"  master-audit.md: {master_lines} lines")
     print(f"  Layer docs: {layer_lines} lines")
+    print(f"  Publication contract: valid")
     print(f"\nACTION: Run verification scripts:")
     print(f"  {skill_dir}/verify-output.sh {audit_dir}")
     print(f"  {skill_dir}/verify-snippets.sh {audit_dir} {project_dir}")

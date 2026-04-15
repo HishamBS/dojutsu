@@ -27,8 +27,8 @@ FINDINGS="$AUDIT_DIR/data/findings.jsonl"
 if [[ -f "$INVENTORY" ]]; then
   INV_COUNT=$(python3 -c "import json; print(json.load(open('$INVENTORY'))['total_files'])" 2>/dev/null || echo "0")
 
-  # Count actual source files (detect stack from config)
-  STACK=$(python3 -c "import json; print(json.load(open('$AUDIT_DIR/data/config.json')).get('stack','unknown'))" 2>/dev/null || echo "unknown")
+  # Count actual source files (detect stack from inventory)
+  STACK=$(python3 -c "import json; print(json.load(open('$INVENTORY')).get('stack','unknown'))" 2>/dev/null || echo "unknown")
 
   case "$STACK" in
     python)  ACTUAL=$(find "$SOURCE_DIR" -name '*.py' -not -path '*/node_modules/*' -not -path '*/.venv/*' -not -path '*/venv/*' | wc -l | tr -d ' ') ;;
@@ -59,12 +59,12 @@ for layer in inv.get('layers', {}).keys():
 
   while IFS= read -r layer; do
     [[ -z "$layer" ]] && continue
-    DOC="$AUDIT_DIR/layers/${layer}-audit.md"
+    DOC="$AUDIT_DIR/layers/${layer}.md"
     if [[ -f "$DOC" ]]; then
       LINES=$(wc -l < "$DOC" | tr -d ' ')
-      pass "layers/${layer}-audit.md exists ($LINES lines)"
+      pass "layers/${layer}.md exists ($LINES lines)"
     else
-      fail "layers/${layer}-audit.md MISSING for layer '$layer'"
+      fail "layers/${layer}.md MISSING for layer '$layer'"
     fi
   done <<< "$LAYERS"
 fi

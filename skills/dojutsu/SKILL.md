@@ -126,7 +126,7 @@ The pipeline detects the current stage from **disk artifacts**, not from memory:
 | Stage | Detected by |
 |-------|------------|
 | RINNEGAN_ACTIVE | `docs/audit/master-audit.md` does not exist |
-| BYAKUGAN_ACTIVE | `docs/audit/deep/{narrative,scorecard,deployment-plan}.md` not all present |
+| BYAKUGAN_ACTIVE | Full deep-analysis package missing: `dependency-graph.json`, `clusters.json`, `impact-analysis.jsonl`, `narrative.md`, `scorecard.md`, `deployment-plan.md`, or `executive-brief.md` |
 | RASENGAN_PHASE_N | `rasengan-state.json` shows incomplete phases |
 | SHARINGAN_PHASE_N | Completed but unverified phases in `rasengan-state.json` vs `verified_phases` in state |
 | PIPELINE_COMPLETE | `rasengan-state.json` status is ALL_PHASES_COMPLETE and all phases verified |
@@ -162,9 +162,13 @@ Dojutsu does NOT execute eye logic directly. It calls each eye's `run-pipeline.p
 **What you do:** Execute the ACTION the pipeline prints. Dispatch impact analysts, narrative generators, scorecard generators as instructed.
 
 **Artifacts produced:**
+- `docs/audit/deep/dependency-graph.json` -- deterministic dependency graph
+- `docs/audit/deep/clusters.json` -- deterministic cluster definitions
+- `docs/audit/deep/impact-analysis.jsonl` -- blast-radius analysis per cluster
 - `docs/audit/deep/narrative.md` -- executive report for stakeholders
 - `docs/audit/deep/scorecard.md` -- compliance rating per rule category
 - `docs/audit/deep/deployment-plan.md` -- rollout plan with risk assessment
+- `docs/audit/deep/executive-brief.md` -- one-page management summary
 
 **Completion signal:** `EYE_COMPLETE: byakugan`
 **Git tag:** `dojutsu/byakugan-complete`

@@ -34,9 +34,9 @@ Your first actions:
    ```
 2. Read ONLY the filtered file `/tmp/rinnegan-layer-[LAYER_NAME].jsonl` (small, just your layer).
 3. Read `$AUDIT_DIR/data/inventory.json` and extract the file list and LOC counts for your layer.
-4. Read `$AUDIT_DIR/data/config.json` for audit metadata.
+4. Read `$AUDIT_DIR/data/audit-stats.json` for audit metadata and layer metrics.
 
-You produce ONE file: `$AUDIT_DIR/layers/[layer-name]-audit.md` using the Write tool.
+You produce ONE file: `$AUDIT_DIR/layers/[layer-name].md` using the Write tool.
 Ensure directory exists: `mkdir -p $AUDIT_DIR/layers/` via Bash before writing.
 
 ---

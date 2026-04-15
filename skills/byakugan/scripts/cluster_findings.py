@@ -150,7 +150,7 @@ def cluster_cross_cutting(findings: list) -> list:
     by_rule_desc: dict = defaultdict(list)
 
     for f in findings:
-        group = f.get("group")
+        group = f.get("cross_cutting_group")
         if group:
             by_group[group].append(f)
 
@@ -171,7 +171,7 @@ def cluster_cross_cutting(findings: list) -> list:
             "type": "cross_cutting",
             "files": sorted({f.get("file", "") for f in group_findings}),
             "findings": group_findings,
-            "source": "group",
+            "source": "cross_cutting_group",
         })
         seen_ids.update(fids)
 
@@ -320,6 +320,29 @@ def compute_stats(formatted: list) -> dict:
     }
 
 
+def annotate_findings_with_cluster_ids(project_dir: str, clusters: list[dict]) -> int:
+    """Write cluster_id back into the published findings dataset."""
+    findings_path = os.path.join(project_dir, "docs", "audit", "data", "findings.jsonl")
+    findings = load_findings(project_dir)
+    if not findings:
+        return 0
+
+    cluster_by_finding = {}
+    for cluster in clusters:
+        for finding_id in cluster.get("finding_ids", []):
+            cluster_by_finding[finding_id] = cluster["id"]
+
+    updated = 0
+    with open(findings_path, "w") as fh:
+        for finding in findings:
+            cluster_id = cluster_by_finding.get(finding.get("id", ""))
+            if cluster_id:
+                finding["cluster_id"] = cluster_id
+                updated += 1
+            fh.write(json.dumps(finding) + "\n")
+    return updated
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: cluster_findings.py <project_dir>", file=sys.stderr)
@@ -354,7 +377,11 @@ def main() -> None:
     with open(out_path, "w") as f:
         json.dump(output, f, indent=2)
 
-    print(f"Clustered {stats['total_findings_clustered']} findings into {stats['total_clusters']} clusters")
+    annotated = annotate_findings_with_cluster_ids(project_dir, formatted)
+    print(
+        f"Clustered {stats['total_findings_clustered']} findings into "
+        f"{stats['total_clusters']} clusters; annotated {annotated} findings"
+    )
 
 
 if __name__ == "__main__":

@@ -51,17 +51,27 @@ fi
 PLAN_FILE=""
 SHARINGAN_BASE="HEAD~1"
 ENGINE="${SHARINGAN_VERIFIER_ENGINE:-${SSOT_ENGINE:-codex}}"
-MODEL="${SHARINGAN_VERIFIER_MODEL:-${SSOT_MODEL:-}}"
+MODEL="${SHARINGAN_VERIFIER_MODEL:-}"
+CLI_ENGINE_SET=0
+CLI_MODEL_SET=0
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --plan) PLAN_FILE="$2"; shift 2 ;;
     --base) SHARINGAN_BASE="$2"; shift 2 ;;
-    --engine) ENGINE="$2"; shift 2 ;;
-    --model) MODEL="$2"; shift 2 ;;
+    --engine) ENGINE="$2"; CLI_ENGINE_SET=1; shift 2 ;;
+    --model) MODEL="$2"; CLI_MODEL_SET=1; shift 2 ;;
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
+
+if [[ $CLI_MODEL_SET -eq 0 && -z "${SHARINGAN_VERIFIER_MODEL:-}" ]]; then
+  if [[ -n "$SSOT_MODEL" && "$ENGINE" == "${SSOT_ENGINE:-}" ]]; then
+    MODEL="$SSOT_MODEL"
+  else
+    MODEL=""
+  fi
+fi
 
 if [[ -z "$PLAN_FILE" ]]; then
   echo "ERROR: --plan is required" >&2
@@ -77,7 +87,11 @@ fi
 CACHE_DIR="${SHARINGAN_CACHE_DIR:-$HOME/.cache/sharingan}"
 PROJECT_HASH=$(sharingan_project_hash)
 REVIEW_FILE="${CACHE_DIR}/independent-review-${PROJECT_HASH}.json"
-mkdir -p "$CACHE_DIR"
+WORK_REVIEW_DIR="$PWD/.tmp/sharingan"
+WORK_REVIEW_FILE="${WORK_REVIEW_DIR}/independent-review-${PROJECT_HASH}.json"
+CLI_OUTPUT_FILE="${CACHE_DIR}/independent-review-${PROJECT_HASH}.stdout.log"
+mkdir -p "$CACHE_DIR" "$WORK_REVIEW_DIR"
+rm -f "$REVIEW_FILE" "$WORK_REVIEW_FILE" "$CLI_OUTPUT_FILE"
 
 # ── Get modified files ──
 MODIFIED_FILES=$(git diff --name-only "$SHARINGAN_BASE" 2>/dev/null || echo "")
@@ -131,7 +145,7 @@ CRITICAL RULES:
 - Read the function BODIES, not just the signatures
 - Apply shell detection rules for the file's language (see above)
 
-Write your assessment as JSON to: $REVIEW_FILE
+Write your assessment as JSON to: $WORK_REVIEW_FILE
 
 JSON format:
 {
@@ -177,7 +191,7 @@ run_direct_cli() {
   case "$ENGINE" in
     claude)
       if command -v claude >/dev/null 2>&1; then
-        echo "$VERIFIER_PROMPT" | claude --print 2>&1
+        echo "$VERIFIER_PROMPT" | claude --print 2>&1 | tee "$CLI_OUTPUT_FILE"
       else
         echo "ERROR: claude CLI not found" >&2
         exit 1
@@ -189,9 +203,21 @@ run_direct_cli() {
         if [[ -n "$MODEL" ]]; then
           CODEX_ARGS+=(-m "$MODEL")
         fi
-        codex "${CODEX_ARGS[@]}" "$VERIFIER_PROMPT" 2>&1
+        codex "${CODEX_ARGS[@]}" "$VERIFIER_PROMPT" 2>&1 | tee "$CLI_OUTPUT_FILE"
       else
         echo "ERROR: codex CLI not found" >&2
+        exit 1
+      fi
+      ;;
+    gemini)
+      if command -v gemini >/dev/null 2>&1; then
+        GEMINI_ARGS=(--yolo -p "$VERIFIER_PROMPT")
+        if [[ -n "$MODEL" ]]; then
+          GEMINI_ARGS=(-m "$MODEL" "${GEMINI_ARGS[@]}")
+        fi
+        gemini "${GEMINI_ARGS[@]}" 2>&1 | tee "$CLI_OUTPUT_FILE"
+      else
+        echo "ERROR: gemini CLI not found" >&2
         exit 1
       fi
       ;;
@@ -208,8 +234,104 @@ abort_mux_dispatch() {
   (agent-mux steer "$dispatch_id" abort >/dev/null 2>&1 || true) &
 }
 
+review_file_is_valid() {
+  local candidate="$1"
+  python3 - "$candidate" <<'PY'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+if not path.is_file():
+    raise SystemExit(1)
+payload = json.loads(path.read_text())
+if not isinstance(payload, dict):
+    raise SystemExit(1)
+requirements = payload.get("requirements")
+summary = payload.get("summary")
+if not isinstance(requirements, list) or not isinstance(summary, dict):
+    raise SystemExit(1)
+raise SystemExit(0)
+PY
+}
+
+extract_review_from_output_log() {
+  local output_log="$1"
+  local target_file="$2"
+  python3 - "$output_log" "$target_file" <<'PY'
+import json, sys
+from json import JSONDecoder
+from pathlib import Path
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+if not source.is_file():
+    raise SystemExit(1)
+
+text = source.read_text(errors="ignore")
+decoder = JSONDecoder()
+for index, char in enumerate(text):
+    if char != "{":
+        continue
+    try:
+        payload, _ = decoder.raw_decode(text[index:])
+    except json.JSONDecodeError:
+        continue
+    if isinstance(payload, dict) and isinstance(payload.get("requirements"), list) and isinstance(payload.get("summary"), dict):
+        target.write_text(json.dumps(payload, indent=2) + "\n")
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+finalize_review_file() {
+  local engine="$1"
+  local model="$2"
+  local source_label="workspace"
+  local attempt=0
+
+  while [[ $attempt -lt 3 ]]; do
+    if review_file_is_valid "$WORK_REVIEW_FILE"; then
+      break
+    fi
+    if [[ -f "$WORK_REVIEW_FILE" ]]; then
+      sleep 1
+    else
+      break
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  if ! review_file_is_valid "$WORK_REVIEW_FILE"; then
+    if ! extract_review_from_output_log "$CLI_OUTPUT_FILE" "$WORK_REVIEW_FILE"; then
+      echo "WARN: Could not recover verifier JSON from output log" >&2
+      return 1
+    fi
+    source_label="stdout"
+  fi
+
+  python3 - "$WORK_REVIEW_FILE" "$REVIEW_FILE" "$engine" "${model:-unknown}" "$source_label" <<'PY'
+import json, sys
+from pathlib import Path
+
+work_file = Path(sys.argv[1])
+final_file = Path(sys.argv[2])
+engine = sys.argv[3]
+model = sys.argv[4]
+source_label = sys.argv[5]
+
+payload = json.loads(work_file.read_text())
+payload["dispatch"] = {
+    "engine": engine,
+    "model": model,
+    "source": source_label,
+}
+final_file.write_text(json.dumps(payload, indent=2) + "\n")
+PY
+}
+
 poll_mux_result() {
   local dispatch_id="$1"
+  local artifact_dir="$2"
   local wait_limit=""
   if [[ -n "${SHARINGAN_AGENT_MUX_WAIT_SEC:-}" ]]; then
     wait_limit="$SHARINGAN_AGENT_MUX_WAIT_SEC"
@@ -224,6 +346,7 @@ poll_mux_result() {
   local elapsed=0
   local mux_result=""
   local mux_state=""
+  local inspect_result=""
 
   while [[ $elapsed -lt $wait_limit ]]; do
     mux_result=$(agent-mux result "$dispatch_id" --json --no-wait 2>/dev/null || echo "")
@@ -236,9 +359,28 @@ poll_mux_result() {
         ;;
     esac
 
-    if [[ -f "$REVIEW_FILE" ]]; then
-      printf '%s\n' '{"status":"completed","metadata":{"source":"review_file"}}'
+    if review_file_is_valid "$WORK_REVIEW_FILE"; then
+      printf '%s\n' '{"status":"completed","metadata":{"source":"workspace_review"}}'
       return 0
+    fi
+
+    inspect_result=$(agent-mux inspect "$dispatch_id" --json 2>/dev/null || echo "")
+    mux_state=$(echo "$inspect_result" | jq -r '.record.status // .meta.status // .status // ""' 2>/dev/null)
+    case "$mux_state" in
+      completed|failed|timed_out|cancelled)
+        printf '%s\n' "$inspect_result"
+        return 0
+        ;;
+    esac
+
+    if [[ -n "$artifact_dir" && -f "$artifact_dir/status.json" ]]; then
+      mux_state=$(jq -r '.state // ""' "$artifact_dir/status.json" 2>/dev/null || echo "")
+      case "$mux_state" in
+        completed|failed|timed_out|cancelled)
+          printf '%s\n' '{"status":"'"$mux_state"'","metadata":{"source":"artifact_status"}}'
+          return 0
+          ;;
+      esac
     fi
 
     sleep "$poll_interval"
@@ -258,13 +400,14 @@ if command -v agent-mux >/dev/null 2>&1; then
   MUX_START=$(agent-mux "${MUX_ARGS[@]}" "$VERIFIER_PROMPT" 2>/dev/null)
   MUX_EXIT=$?
   MUX_DISPATCH_ID=$(echo "$MUX_START" | jq -r '.dispatch_id // ""' 2>/dev/null)
+  MUX_ARTIFACT_DIR=$(echo "$MUX_START" | jq -r '.artifact_dir // .dispatch_spec.artifact_dir // .control.artifact_dir // ""' 2>/dev/null)
 
   if [[ -z "$MUX_DISPATCH_ID" ]]; then
     MUX_STATUS="failed"
     MUX_ERROR=$(echo "$MUX_START" | jq -r '.error.message // .error // "missing dispatch_id"' 2>/dev/null)
   else
-    MUX_RESULT=$(poll_mux_result "$MUX_DISPATCH_ID" || echo "")
-    MUX_STATUS=$(echo "$MUX_RESULT" | jq -r '.status // "failed"' 2>/dev/null)
+    MUX_RESULT=$(poll_mux_result "$MUX_DISPATCH_ID" "$MUX_ARTIFACT_DIR" || echo "")
+    MUX_STATUS=$(echo "$MUX_RESULT" | jq -r '.status // .record.status // .meta.status // "failed"' 2>/dev/null)
     MUX_ERROR=$(echo "$MUX_RESULT" | jq -r '.error.message // .error // "unknown error"' 2>/dev/null)
   fi
 
@@ -280,15 +423,14 @@ else
   run_direct_cli
 fi
 
-# ── Inject dispatch metadata into review file for reconcile.sh ──
-if [[ -f "$REVIEW_FILE" ]] && command -v jq >/dev/null 2>&1; then
-  jq --arg engine "$ENGINE" --arg model "${MODEL:-unknown}" \
-    '. + {"dispatch": {"engine": $engine, "model": $model}}' \
-    "$REVIEW_FILE" > "${REVIEW_FILE}.tmp" && mv "${REVIEW_FILE}.tmp" "$REVIEW_FILE"
+if ! finalize_review_file "$ENGINE" "${MODEL:-unknown}"; then
+  echo "WARN: Review file was not created at $REVIEW_FILE" >&2
+  echo "The verifier agent may not have written the output file." >&2
+  exit 1
 fi
 
 # ── Verify output exists ──
-if [[ -f "$REVIEW_FILE" ]]; then
+if review_file_is_valid "$REVIEW_FILE"; then
   echo ""
   echo "Independent review written to: $REVIEW_FILE"
   # Validate JSON
@@ -307,7 +449,6 @@ print(f\"  Missing: {s.get('missing', 0)}\")
     echo "WARN: Review file exists but is not valid JSON" >&2
   fi
 else
-  echo "WARN: Review file was not created at $REVIEW_FILE" >&2
-  echo "The verifier agent may not have written the output file." >&2
+  echo "WARN: Review file was not created as valid JSON at $REVIEW_FILE" >&2
   exit 1
 fi

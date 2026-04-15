@@ -271,7 +271,7 @@ def compute_stats(audit_dir: str) -> dict[str, Any]:
         - ``data/inventory.json`` -- file inventory
         - ``data/pipeline-health.json`` -- tool scanner results
         - ``data/quality-gate.json`` -- readiness score
-        - ``data/config.json`` -- audit config (if exists)
+        - ``data/config.json`` -- project metadata only (if exists)
 
     Returns a dict with every number a report generator might need.
     """
@@ -287,19 +287,10 @@ def compute_stats(audit_dir: str) -> dict[str, Any]:
     # Project metadata
     inv = inventory or {}
     project_name: str = inv.get("root", "unknown")
-    stack: str = inv.get("stack", "unknown")
-    framework: str = inv.get("framework", "unknown")
+    stack: str = (config or {}).get("stack", inv.get("stack", "unknown"))
+    framework: str = (config or {}).get("framework", inv.get("framework", "unknown"))
     total_files: int = inv.get("total_files", 0)
     total_loc: int = inv.get("total_loc", 0)
-
-    # Dedup info from config
-    dedup_count: int = 0
-    total_raw: int = len(findings)
-    if config:
-        dedup_count = config.get("deduped_count", 0)
-        raw_from_config = config.get("total_findings", 0)
-        if raw_from_config > 0:
-            total_raw = raw_from_config
 
     now = datetime.now(timezone.utc)
 
@@ -315,8 +306,8 @@ def compute_stats(audit_dir: str) -> dict[str, Any]:
         "total_loc": total_loc,
         # Finding totals
         "total_findings": len(findings),
-        "total_raw_findings": total_raw,
-        "dedup_count": dedup_count,
+        "total_raw_findings": len(findings),
+        "dedup_count": 0,
         # Severity breakdown
         "severity": _severity_counts(findings),
         # Category breakdown

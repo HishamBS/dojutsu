@@ -22,7 +22,7 @@ Your first actions:
    grep '"cross_cutting":true' $AUDIT_DIR/data/findings.jsonl > /tmp/rinnegan-cross-cutting.jsonl
    ```
 2. Read ONLY the filtered file `/tmp/rinnegan-cross-cutting.jsonl`.
-3. Group filtered findings by their `"group"` field.
+3. Group filtered findings by their `"cross_cutting_group"` field.
 4. If no findings have cross_cutting: true, create the file with a note: "No cross-cutting patterns detected."
 
 ## Output

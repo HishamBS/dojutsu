@@ -10,8 +10,6 @@ from collections import Counter
 from typing import Any, TypedDict
 
 
-NULL_FIX_THRESHOLD_PERCENT = 5.0
-
 # ---------------------------------------------------------------------------
 # Spec-compliant phase DAG (from output-templates.md / finding-schema.md)
 # ---------------------------------------------------------------------------
@@ -29,6 +27,20 @@ SPEC_PHASE_NODES: list[dict[str, Any]] = [
     {"id": 9, "name": "Verification", "rules": ["R16", "R08"]},
     {"id": 10, "name": "Documentation", "rules": ["R11"]},
 ]
+
+PHASE_FILE_SLUGS: dict[int, str] = {
+    0: "foundation",
+    1: "security",
+    2: "typing",
+    3: "ssot-dry",
+    4: "architecture",
+    5: "clean-code",
+    6: "performance",
+    7: "data-integrity",
+    8: "refactoring",
+    9: "verification",
+    10: "documentation",
+}
 
 SPEC_PHASE_EDGES: list[dict[str, int]] = [
     {"from": 0, "to": 1},
@@ -83,10 +95,10 @@ class NullFixResult(TypedDict):
 
 
 def validate_null_fix_coverage(audit_dir: str) -> NullFixResult:
-    """Check that non-REVIEW findings have either target_code or fix_plan.
+    """Check that every non-REVIEW finding has either target_code or fix_plan.
 
     Returns a dict with:
-      - triggered: True if the null-fix percentage exceeds the threshold
+      - triggered: True if any non-REVIEW finding is missing both fields
       - null_fix_count: number of non-REVIEW findings missing both fields
       - non_review_count: total non-REVIEW findings
       - percent: null_fix_count / non_review_count * 100
@@ -128,7 +140,7 @@ def validate_null_fix_coverage(audit_dir: str) -> NullFixResult:
         )
 
     percent = (null_fix_count / non_review_count) * 100.0
-    triggered = percent > NULL_FIX_THRESHOLD_PERCENT
+    triggered = null_fix_count > 0
 
     return NullFixResult(
         triggered=triggered,

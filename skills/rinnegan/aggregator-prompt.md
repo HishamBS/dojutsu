@@ -142,12 +142,12 @@ Scan the deduplicated findings for patterns that appear across multiple files:
 
 2. **Tag** any group that spans 3 or more distinct files:
    - Set `"cross_cutting": true` on every finding in the group.
-   - Assign a shared `"group"` field with a descriptive label. Format: `"{phase}.{subgroup} {short description}"`. Examples:
+   - Assign a shared `"cross_cutting_group"` field with a descriptive label. Format: `"{phase}.{subgroup} {short description}"`. Examples:
      - `"1.1 Replace verify=False with HTTP client factory"`
      - `"3.2 Extract duplicated timeout constants to SSOT config"`
      - `"5.1 Remove banner comments across all modules"`
 
-3. **Non-cross-cutting findings** do not get the `cross_cutting` or `group` fields (omit them entirely, do not set them to false/null).
+3. **Non-cross-cutting findings** do not get the `cross_cutting` or `cross_cutting_group` fields (omit them entirely, do not set them to false/null).
 
 ### Step 5: Calculate Statistics
 

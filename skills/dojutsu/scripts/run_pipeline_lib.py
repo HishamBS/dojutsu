@@ -131,8 +131,16 @@ def detect_stage(project_dir: str, state: dict) -> str:
     if not os.path.exists(os.path.join(audit_dir, "master-audit.md")):
         return "RINNEGAN_ACTIVE"
 
-    # 2. Byakugan: all 3 deliverables must exist
-    byakugan_outputs = ["narrative.md", "scorecard.md", "deployment-plan.md"]
+    # 2. Byakugan: full analysis package must exist before audit is complete
+    byakugan_outputs = [
+        "dependency-graph.json",
+        "clusters.json",
+        "impact-analysis.jsonl",
+        "narrative.md",
+        "scorecard.md",
+        "deployment-plan.md",
+        "executive-brief.md",
+    ]
     if not all(os.path.exists(os.path.join(deep_dir, f)) for f in byakugan_outputs):
         return "BYAKUGAN_ACTIVE"
 
@@ -200,8 +208,9 @@ def _delegate_to_eye(eye: str, project_dir: str, state: dict) -> int:
     stderr = result.stderr.strip()
 
     # Check for rate limit errors FIRST (don't retry these)
-    combined_output = (stdout + " " + stderr).lower()
-    if any(kw in combined_output for kw in RATE_LIMIT_KEYWORDS):
+    # Only check stderr — stdout contains ACTION text that may mention "rate limit" in instructions
+    error_output = stderr.lower()
+    if any(kw in error_output for kw in RATE_LIMIT_KEYWORDS):
         return _pause_pipeline(project_dir, state, eye, "Rate limited by provider")
 
     # Check for script errors

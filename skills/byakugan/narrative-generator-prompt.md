@@ -169,7 +169,7 @@ For each finding, use this exact format:
 
 Patterns that appear across multiple themes or clusters.
 
-For each cross-cutting pattern (from findings with `cross_cutting: true` and shared `group` fields):
+For each cross-cutting pattern (from findings with `cross_cutting: true` and shared `cross_cutting_group` fields):
 
 ```markdown
 ### [Group label]

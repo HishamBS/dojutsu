@@ -165,6 +165,8 @@ Produce a `recommended_approach` that specifies:
 
 ### Output File: `[OUTPUT_FILE_PATH]`
 
+The controller writes one cluster result per file, typically under `docs/audit/deep/impact-analysis-parts/[CLUSTER_ID].json`. These per-cluster JSON files are the durable checkpoint format; the pipeline merges them into the published `impact-analysis.jsonl`.
+
 Write a single JSON object (not JSONL) with this structure:
 
 ```json
