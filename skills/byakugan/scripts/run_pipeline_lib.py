@@ -18,8 +18,10 @@ if os.path.isdir(_dojutsu_scripts):
     _sys.path.insert(0, os.path.realpath(_dojutsu_scripts))
 try:
     from dojutsu_state import log_dispatch
+    from work_orders import write_impact_work_orders
 except ImportError:
     def log_dispatch(*a, **kw): pass
+    def write_impact_work_orders(*a, **kw): return 0
 
 try:
     from merge_impact_analysis import impact_output_status, merge_impact_analysis_outputs
@@ -37,6 +39,22 @@ except ImportError:
 
     def merge_impact_analysis_outputs(_project_dir: str) -> dict:
         raise ValueError("merge_impact_analysis unavailable")
+
+_rinnegan_scripts = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "rinnegan", "scripts"
+)
+if os.path.isdir(_rinnegan_scripts):
+    if _rinnegan_scripts not in sys.path:
+        sys.path.insert(0, os.path.realpath(_rinnegan_scripts))
+try:
+    from bundle_renderer import render_bundle
+    from report_contract import validate_publication_contract
+except ImportError:
+    def render_bundle(_audit_dir: str, _stage: str, check: bool = False) -> dict:
+        return {"written": [], "mismatches": [], "count": 0}
+
+    def validate_publication_contract(_audit_dir: str, stage: str = "byakugan") -> dict:
+        return {"ok": False, "stage": stage, "errors": ["report_contract unavailable"]}
 
 
 def _now_iso() -> str:
@@ -70,21 +88,19 @@ def get_state(project_dir: str) -> str:
             return "NEEDS_IMPACT_MERGE"
         return "NEEDS_IMPACT_ANALYSIS"
 
-    # Step 4: Narrative (LLM)
-    if not os.path.exists(os.path.join(deep_dir, "narrative.md")):
-        return "NEEDS_NARRATIVE"
+    # Step 4: Deterministic publication bundle (compiled from SSOT)
+    deterministic_outputs = [
+        "narrative.md",
+        "scorecard.md",
+        "deployment-plan.md",
+        "executive-brief.md",
+    ]
+    if not all(os.path.exists(os.path.join(deep_dir, name)) for name in deterministic_outputs):
+        return "NEEDS_REPORT_RENDER"
 
-    # Step 5: Scorecard (deterministic + LLM)
-    if not os.path.exists(os.path.join(deep_dir, "scorecard.md")):
-        return "NEEDS_SCORECARD"
-
-    # Step 6: Deployment plan (LLM)
-    if not os.path.exists(os.path.join(deep_dir, "deployment-plan.md")):
-        return "NEEDS_DEPLOYMENT_PLAN"
-
-    # Step 7: Executive brief (LLM — 1-page management summary)
-    if not os.path.exists(os.path.join(deep_dir, "executive-brief.md")):
-        return "NEEDS_EXECUTIVE_BRIEF"
+    publication = validate_publication_contract(audit_dir, stage="byakugan")
+    if not publication["ok"]:
+        return "NEEDS_REPORT_RENDER"
 
     return "COMPLETE"
 
@@ -164,6 +180,18 @@ def run_pipeline(project_dir: str) -> int:
         )
         state = get_state(project_dir)
 
+    if state == "NEEDS_REPORT_RENDER":
+        print("AUTO: Rendering deterministic deep-analysis bundle...")
+        render_bundle(audit_dir, "byakugan", check=False)
+        publication = validate_publication_contract(audit_dir, stage="byakugan")
+        if not publication["ok"]:
+            print("ERROR: byakugan publication contract is invalid")
+            for error in publication["errors"]:
+                print(f"  - {error}")
+            return 1
+        print("AUTO: Deterministic deep-analysis bundle validated.")
+        state = get_state(project_dir)
+
     # Output state + action
     print(f"\nSTATE: {state}")
     print(f"AUDIT_DIR: {audit_dir}")
@@ -190,7 +218,13 @@ def run_pipeline(project_dir: str) -> int:
             clusters = json.load(f)
 
         total_clusters = len(clusters["clusters"])
+        work_order_count = write_impact_work_orders(
+            audit_dir,
+            clusters["clusters"],
+            set(impact_status["completed_clusters"]),
+        )
         print(f"\nCLUSTERS: {total_clusters}")
+        print(f"WORK_ORDERS: {work_order_count} impact-analysis requests on disk")
         log_dispatch(project_dir, task="impact_analysis", tokens=30000 * min(total_clusters // 5 + 1, 5), model="sonnet")
 
         print(f"\nACTION: Read {skill_dir}/impact-analysis-prompt.md then dispatch impact analysis agents.")
@@ -220,64 +254,6 @@ def run_pipeline(project_dir: str) -> int:
         if total_clusters > 20:
             print(f"  ... and {total_clusters - 20} more clusters")
 
-        return 0
-
-    if state == "NEEDS_NARRATIVE":
-        log_dispatch(project_dir, task="narrator", tokens=40000, model="opus")
-
-        print(f"\nACTION: Read {skill_dir}/narrative-generator-prompt.md then dispatch narrative generator.")
-        print(f"  MODEL: opus")
-        print(f"  ROLE: dojutsu-narrator (if agent-mux configured)")
-        print(f"  NOTE: This is THE premium document. Opus quality justified here (1 dispatch only).")
-        print(f"  Agent reads: {deep_dir}/impact-analysis.jsonl + {deep_dir}/clusters.json + inventory")
-        print(f"  Agent writes: {deep_dir}/narrative.md (2000-4000 lines, v5-quality)")
-        print(f"  Then run this script again.")
-        return 0
-
-    if state == "NEEDS_SCORECARD":
-        log_dispatch(project_dir, task="scorecard", tokens=20000, model="sonnet")
-
-        print(f"\nACTION: Read {skill_dir}/scorecard-generator-prompt.md then dispatch scorecard generator.")
-        print(f"  MODEL: sonnet")
-        print(f"  ROLE: dojutsu-enricher (if agent-mux configured)")
-        print(f"  Agent reads: findings.jsonl + clusters.json + inventory.json")
-        print(f"  Agent writes: {deep_dir}/scorecard.md")
-        print(f"  Then run this script again.")
-        return 0
-
-    if state == "NEEDS_DEPLOYMENT_PLAN":
-        high_critical = _count_high_critical(project_dir)
-        if high_critical == 0:
-            # No HIGH/CRITICAL → write minimal deployment plan
-            plan_path = os.path.join(deep_dir, "deployment-plan.md")
-            with open(plan_path, "w") as f:
-                f.write(f"# Deployment Plan\n\n")
-                f.write(f"**Generated:** {_now_iso()}\n\n")
-                f.write(f"No HIGH or CRITICAL findings detected. ")
-                f.write(f"Standard deployment process applies.\n")
-            print("AUTO: No HIGH/CRITICAL findings — minimal deployment plan written.")
-            state = get_state(project_dir)
-        else:
-            print(f"\nHIGH/CRITICAL findings: {high_critical}")
-            log_dispatch(project_dir, task="deployment_plan", tokens=20000, model="sonnet")
-
-            print(f"\nACTION: Read {skill_dir}/deployment-plan-prompt.md then dispatch deployment plan generator.")
-            print(f"  MODEL: sonnet")
-            print(f"  ROLE: dojutsu-enricher (if agent-mux configured)")
-            print(f"  Agent reads: impact-analysis.jsonl + clusters.json + narrative.md")
-            print(f"  Agent writes: {deep_dir}/deployment-plan.md")
-            print(f"  Then run this script again.")
-            return 0
-
-    if state == "NEEDS_EXECUTIVE_BRIEF":
-        log_dispatch(project_dir, task="executive_brief", tokens=5000, model="sonnet")
-
-        print(f"\nACTION: Read {skill_dir}/executive-brief-prompt.md then dispatch executive brief generator.")
-        print(f"  MODEL: sonnet")
-        print(f"  ROLE: dojutsu-enricher (if agent-mux configured)")
-        print(f"  Agent reads: findings.jsonl + inventory.json + narrative.md (executive summary only)")
-        print(f"  Agent writes: {deep_dir}/executive-brief.md")
-        print(f"  Then run this script again.")
         return 0
 
     if state == "COMPLETE":

@@ -94,7 +94,7 @@ INACTIVE
 RINNEGAN_ACTIVE ──────── scan project, create findings.jsonl + phase tasks
     |
     v
-BYAKUGAN_ACTIVE ──────── trace dependencies, generate narrative/scorecard/deployment-plan
+BYAKUGAN_ACTIVE ──────── trace dependencies, generate structured impact checkpoints, compile deep-analysis bundle
     |
     +──> AUDIT_COMPLETE ──── (audit-only mode stops here)
     |
@@ -143,7 +143,7 @@ Dojutsu does NOT execute eye logic directly. It calls each eye's `run-pipeline.p
 
 **What happens:** Pipeline delegates to rinnegan's `run-pipeline.py`. Rinnegan inventories the project, runs grep patterns, dispatches LLM scanners, aggregates findings, enriches with fix instructions, and generates documentation.
 
-**What you do:** Execute the ACTION that the pipeline prints. It will tell you which prompt file to read and which agents to dispatch. Run the pipeline script again after each action completes.
+**What you do:** Execute the ACTION that the pipeline prints. Agent stages write checkpoint artifacts only. Published docs are compiled deterministically from SSOT data. Run the pipeline script again after each action completes.
 
 **Artifacts produced:**
 - `docs/audit/master-audit.md` -- navigation hub
@@ -157,9 +157,9 @@ Dojutsu does NOT execute eye logic directly. It calls each eye's `run-pipeline.p
 
 ### BYAKUGAN_ACTIVE (Analysis)
 
-**What happens:** Pipeline delegates to byakugan's `run-pipeline.py`. Byakugan builds a dependency graph, clusters findings, generates impact analysis, executive narrative, compliance scorecard, and deployment plan.
+**What happens:** Pipeline delegates to byakugan's `run-pipeline.py`. Byakugan builds a dependency graph, clusters findings, and dispatches impact analysis agents. The pipeline then compiles the final deep-analysis docs deterministically.
 
-**What you do:** Execute the ACTION the pipeline prints. Dispatch impact analysts, narrative generators, scorecard generators as instructed.
+**What you do:** Execute the ACTION the pipeline prints. Dispatch impact analysts only. The deterministic bundle compiler owns the final published docs.
 
 **Artifacts produced:**
 - `docs/audit/deep/dependency-graph.json` -- deterministic dependency graph

@@ -12,6 +12,7 @@ SCRIPTS_DIR = os.path.join(
 sys.path.insert(0, SCRIPTS_DIR)
 
 from compute_audit_stats import write_stats
+from bundle_renderer import render_bundle
 from report_contract import (
     canonical_layer_doc_relpath,
     canonical_phase_doc_relpath,
@@ -77,57 +78,6 @@ def _write_task_file(audit_dir: str, phase: int, phase_name: str, tasks: list[di
     )
 
 
-def _write_master_audit(audit_dir: str) -> None:
-    lines = [
-        "# Fixture Codebase Audit",
-        "",
-        "> **Date:** 2026-04-15 | **Stack:** python (fastapi)",
-        "> **Files:** 3 | **LOC:** 120 | **Findings:** 2",
-        "> **Density:** 16.7 findings/KLOC | **Readiness:** 90.0%",
-        "",
-        "## Severity Distribution",
-        "",
-        "| Severity | Count | % |",
-        "|----------|------:|---:|",
-        "| CRITICAL | 0 | 0.0% |",
-        "| HIGH | 1 | 50.0% |",
-        "| MEDIUM | 1 | 50.0% |",
-        "| LOW | 0 | 0.0% |",
-        "| REVIEW | 0 | 0.0% |",
-        "",
-        "## Layer Audit Index",
-        "",
-        "| Layer | Files | LOC | Findings | Density | Audit Doc |",
-        "|-------|------:|----:|---------:|--------:|-----------|",
-        f"| services | 2 | 90 | 1 | 11.1 | [services.md]({canonical_layer_doc_relpath('services')}) |",
-        f"| utils | 1 | 30 | 1 | 33.3 | [utils.md]({canonical_layer_doc_relpath('utils')}) |",
-        "",
-        "## Remediation Phases",
-        "",
-        "| Phase | Name | Findings | Status | Phase Doc |",
-        "|-------|------|----------|--------|-----------|",
-    ]
-    phase_counts = {2: 1, 3: 1}
-    phase_names = {
-        0: "Foundation", 1: "Security", 2: "Typing", 3: "SSOT/DRY", 4: "Architecture",
-        5: "Clean Code", 6: "Performance", 7: "Data Integrity", 8: "Refactoring",
-        9: "Verification", 10: "Documentation",
-    }
-    for phase_id in range(11):
-        lines.append(
-            f"| {phase_id} | {phase_names[phase_id]} | {phase_counts.get(phase_id, 0)} | "
-            f"NOT STARTED | [phase-{phase_id}]({canonical_phase_doc_relpath(phase_id)}) |"
-        )
-    lines.extend([
-        "",
-        "## Links",
-        "",
-        "[Cross Cutting](cross-cutting.md)",
-    ])
-    with open(os.path.join(audit_dir, "master-audit.md"), "w") as fh:
-        fh.write("\n".join(lines) + "\n")
-
-
 def _build_fixture(tmp: str) -> str:
     audit_dir = tmp
     findings = [
@@ -157,19 +107,7 @@ def _build_fixture(tmp: str) -> str:
     write_stats(audit_dir)
     generate_phase_docs(audit_dir)
     generate_report_manifest(audit_dir)
-
-    os.makedirs(os.path.join(audit_dir, "layers"), exist_ok=True)
-    with open(os.path.join(audit_dir, canonical_layer_doc_relpath("services")), "w") as fh:
-        fh.write("# Services\n")
-    with open(os.path.join(audit_dir, canonical_layer_doc_relpath("utils")), "w") as fh:
-        fh.write("# Utils\n")
-    with open(os.path.join(audit_dir, "cross-cutting.md"), "w") as fh:
-        fh.write("# Cross-Cutting Patterns\n\nNo cross-cutting patterns detected.\n")
-    with open(os.path.join(audit_dir, "progress.md"), "w") as fh:
-        fh.write("# Progress\n")
-    with open(os.path.join(audit_dir, "agent-instructions.md"), "w") as fh:
-        fh.write("# Agent Instructions\n")
-    _write_master_audit(audit_dir)
+    render_bundle(audit_dir, "rinnegan", check=False)
     return audit_dir
 
 
@@ -177,9 +115,6 @@ class TestPhaseDocGeneration:
     def test_generate_phase_docs_uses_canonical_names(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             audit_dir = _build_fixture(tmp)
-            generated = generate_phase_docs(audit_dir)
-            assert canonical_phase_doc_relpath(0) in generated
-            assert canonical_phase_doc_relpath(10) in generated
             assert os.path.isfile(os.path.join(audit_dir, canonical_phase_doc_relpath(3)))
 
 

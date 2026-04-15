@@ -126,9 +126,25 @@ def detect_stage(project_dir: str, state: dict) -> str:
     audit_dir = os.path.join(project_dir, "docs/audit")
     deep_dir = os.path.join(audit_dir, "deep")
     data_dir = os.path.join(audit_dir, "data")
+    verdict_path = os.path.join(data_dir, "bundle-verdict.json")
+
+    def bundle_verdict_ok(required_stage: str) -> bool:
+        if not os.path.isfile(verdict_path):
+            return False
+        try:
+            with open(verdict_path) as fh:
+                verdict = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            return False
+        if verdict.get("ok") is not True:
+            return False
+        stage_name = str(verdict.get("stage", ""))
+        if required_stage == "rinnegan":
+            return stage_name in {"rinnegan", "byakugan"}
+        return stage_name == required_stage
 
     # 1. Rinnegan: check for master-audit.md (final output)
-    if not os.path.exists(os.path.join(audit_dir, "master-audit.md")):
+    if not os.path.exists(os.path.join(audit_dir, "master-audit.md")) or not bundle_verdict_ok("rinnegan"):
         return "RINNEGAN_ACTIVE"
 
     # 2. Byakugan: full analysis package must exist before audit is complete
@@ -141,7 +157,7 @@ def detect_stage(project_dir: str, state: dict) -> str:
         "deployment-plan.md",
         "executive-brief.md",
     ]
-    if not all(os.path.exists(os.path.join(deep_dir, f)) for f in byakugan_outputs):
+    if not all(os.path.exists(os.path.join(deep_dir, f)) for f in byakugan_outputs) or not bundle_verdict_ok("byakugan"):
         return "BYAKUGAN_ACTIVE"
 
     # 3. Rasengan + Sharingan per-phase loop

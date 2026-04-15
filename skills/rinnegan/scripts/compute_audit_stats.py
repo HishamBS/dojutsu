@@ -258,6 +258,33 @@ def _rule_breakdown(findings: list[dict[str, Any]]) -> list[dict[str, str | int]
     ]
 
 
+def _affected_file_count(findings: list[dict[str, Any]]) -> int:
+    return len({str(f.get("file", "")) for f in findings if str(f.get("file", ""))})
+
+
+def _cluster_stats(audit_dir: str) -> dict[str, Any]:
+    clusters = _load_json(os.path.join(audit_dir, "deep", "clusters.json")) or {}
+    items = clusters.get("clusters", [])
+    if not isinstance(items, list):
+        items = []
+    return {
+        "total_clusters": len(items),
+        "ids": [str(cluster.get("id", "")) for cluster in items if str(cluster.get("id", ""))],
+    }
+
+
+def _family_stats(audit_dir: str) -> dict[str, Any]:
+    families = _load_json(os.path.join(audit_dir, "data", "finding-families.json")) or {}
+    summary = families.get("summary", {})
+    if not isinstance(summary, dict):
+        summary = {}
+    return {
+        "families_created": int(summary.get("families_created", 0)),
+        "root_causes": int(summary.get("root_causes", 0)),
+        "subordinate_findings": int(summary.get("subordinate_findings", 0)),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -308,6 +335,7 @@ def compute_stats(audit_dir: str) -> dict[str, Any]:
         "total_findings": len(findings),
         "total_raw_findings": len(findings),
         "dedup_count": 0,
+        "affected_files": _affected_file_count(findings),
         # Severity breakdown
         "severity": _severity_counts(findings),
         # Category breakdown
@@ -330,6 +358,9 @@ def compute_stats(audit_dir: str) -> dict[str, Any]:
         "scanners": _scanner_breakdown(findings),
         # Rule breakdown
         "rules": _rule_breakdown(findings),
+        # Cluster and family rollups
+        "clusters": _cluster_stats(audit_dir),
+        "families": _family_stats(audit_dir),
     }
 
     return stats

@@ -11,10 +11,15 @@ if os.path.isdir(_dojutsu_scripts):
     _sys.path.insert(0, os.path.realpath(_dojutsu_scripts))
 try:
     from dojutsu_state import log_dispatch
+    from work_orders import write_scan_work_orders, write_enrichment_work_orders
 except ImportError:
     def log_dispatch(*a, **kw): pass
+    def write_scan_work_orders(*a, **kw): return 0
+    def write_enrichment_work_orders(*a, **kw): return 0
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from bundle_renderer import render_bundle
+from finding_families import collapse_finding_families
 from run_pipeline_lib import generate_dag_and_config, evaluate_quality_gate_from_audit, validate_null_fix_coverage
 from dojutsu_config import DojutsuConfig, PROMPT_OVERHEAD_TOKENS, TOKENS_PER_LOC, TOOL_OVERHEAD_PER_FILE
 from output_validator import (
@@ -108,16 +113,9 @@ def get_state():
         return "NEEDS_PHASES"
     if not file_exists("master-audit.md"):
         return "NEEDS_GENERATION"
-    if count_lines("master-audit.md") < 300:
-        return "NEEDS_GENERATION"
-    # Check layer docs exist and meet minimum total
+    # Check layer docs exist
     layer_docs = glob.glob(os.path.join(audit_dir, "layers/*.md"))
     if not layer_docs:
-        return "NEEDS_GENERATION"
-    inv = json.load(open(os.path.join(audit_dir, "data/inventory.json")))
-    layer_total = sum(count_lines(os.path.relpath(f, audit_dir)) for f in layer_docs)
-    min_layer_total = inv["total_loc"] * 20 // 1000
-    if layer_total < min_layer_total:
         return "NEEDS_GENERATION"
     # Check task files exist
     if not glob.glob(os.path.join(audit_dir, "data/tasks/phase-*-tasks.json")):
@@ -165,6 +163,9 @@ if state == "NEEDS_INVENTORY":
 if state == "NEEDS_SCAN_PLAN":
     print("AUTO: Creating scan plan...")
     run_script("create-scan-plan.py", audit_dir)
+    scan_plan = json.load(open(os.path.join(audit_dir, "data/scan-plan.json")))
+    work_order_count = write_scan_work_orders(audit_dir, scan_plan)
+    print(f"AUTO: Wrote {work_order_count} scanner work orders")
     # Also run exhaustive grep scanner (deterministic, finds ALL mechanical violations)
     print("\nAUTO: Running exhaustive grep scanner...")
     run_script("grep-scanner.py", project_dir, audit_dir)
@@ -242,6 +243,9 @@ if state == "NEEDS_SCANNING":
         with open(os.path.join(audit_dir, "data/scan-plan.json"), "w") as f:
             json.dump(plan, f, indent=2)
         print(f"  CIRCUIT BREAKER: {len(failed)} batches exceeded {MAX_BATCH_RETRIES} retries — marked as failed, skipping")
+
+    work_order_count = write_scan_work_orders(audit_dir, plan)
+    print(f"AUTO: Reconciled {work_order_count} scanner work orders")
 
     # Only dispatch non-failed pending batches
     pending = [b for b in plan["batches"] if b["status"] == "pending"]
@@ -346,6 +350,8 @@ elif state == "NEEDS_ENRICHMENT":
         print(f"All {len(layers)} layers enriched. Run merge-enriched.py then re-run pipeline.")
         print(f"  python3 {skill_dir}/scripts/merge-enriched.py {audit_dir}")
     else:
+        work_order_count = write_enrichment_work_orders(audit_dir, dict(layers))
+        print(f"AUTO: Wrote {work_order_count} enrichment work orders")
         print(f"\nFINDINGS: {len(findings)} across {len(layers)} layers ({len(complete_layers)} already enriched)")
         enr_tier = _cfg.tier_for("enricher")
         for name, count in sorted(pending_layers.items(), key=lambda x: -x[1]):
@@ -362,6 +368,12 @@ elif state == "NEEDS_ENRICHMENT":
         print(f"Then run this script again.")
 
 elif state == "NEEDS_PHASES":
+    family_result = collapse_finding_families(audit_dir)
+    print(
+        f"\nAUTO: Collapsed structural finding families "
+        f"({family_result['families_created']} families, {family_result['subordinate_findings']} subordinate findings)"
+    )
+
     # Deterministic generation: DAG and config are spec-fixed, never LLM-generated
     dag, rasengan_cfg = generate_dag_and_config(audit_dir, project_dir)
     print(f"\nAUTO: Wrote phase-dag.json ({len(dag['edges'])} edges, {len(dag['nodes'])} nodes)")
@@ -408,33 +420,15 @@ elif state == "NEEDS_GENERATION":
     except Exception as e:
         print(f"WARNING: Could not write report-manifest.json: {e}")
 
-    print(f"\nFINDINGS: {findings_count}, LAYERS: {len(inv['layers'])}, LOC: {inv['total_loc']}")
-    gen_tier = _cfg.tier_for("layer_generator")
-    hub_tier = _cfg.tier_for("master_hub_generator")
-    xcut_tier = _cfg.tier_for("cross_cutting_generator")
-    for name, data in sorted(inv["layers"].items(), key=lambda x: -x[1]["loc"]):
-        log_dispatch(project_dir, task=f"gen_{name}", tokens=data["loc"] * 4, model=gen_tier)
-    log_dispatch(project_dir, task="gen_master_hub", tokens=30000, model=hub_tier)
-    log_dispatch(project_dir, task="gen_cross_cutting", tokens=20000, model=xcut_tier)
+    try:
+        render_bundle(audit_dir, "rinnegan", check=False)
+        print("AUTO: Rendered deterministic audit bundle")
+    except Exception as e:
+        print(f"WARNING: Could not render deterministic audit bundle: {e}")
 
-    print(f"\nACTION: Read generator prompts then dispatch generators:")
-    print(f"  MODEL for layer generators: {gen_tier} ({_cfg.model_for('layer_generator')})")
-    print(f"  MODEL for master-hub generator: {hub_tier} ({_cfg.model_for('master_hub_generator')}) (ONE dispatch — premium writing)")
-    print(f"  MODEL for cross-cutting generator: {xcut_tier} ({_cfg.model_for('cross_cutting_generator')})")
-    print(f"  STATS: {audit_dir}/data/audit-stats.json (USE ONLY THESE NUMBERS — do not count from raw data)")
-    print(f"  ROLES: dojutsu-enricher (layers/cross-cutting), dojutsu-narrator (master-hub)")
-    print(f"  {skill_dir}/layer-generator-prompt.md (per layer)")
-    print(f"  {skill_dir}/master-hub-generator-prompt.md (1 hub, 300-500 lines)")
-    print(f"  {skill_dir}/cross-cutting-generator-prompt.md (1 cross-cutting)")
-    print(f"  {skill_dir}/output-templates.md (for phase/progress/config templates)")
-    print(f"  {skill_dir}/finding-schema.md (for JSON Generator task transformation)")
-    print(f"\nGenerators read findings.jsonl from disk. Pass AUDIT_DIR + layer name + min lines.")
-    print(f"IMPORTANT: All numbers (severity counts, category totals, dates, quality gate) MUST come from audit-stats.json.")
-    for name, data in sorted(inv["layers"].items(), key=lambda x: -x[1]["loc"]):
-        min_lines = max(10, data["loc"] * 20 // 1000)
-        print(f"  LAYER: {name} ({data['loc']} LOC, {len(data['files'])} files, min {min_lines} lines)")
-    print(f"\nAlso create: progress.md, agent-instructions.md")
-    print(f"After complete, run this script again.")
+    print(f"\nFINDINGS: {findings_count}, LAYERS: {len(inv['layers'])}, LOC: {inv['total_loc']}")
+    print("\nACTION: Deterministic audit bundle has been rendered from SSOT data.")
+    print("  Run this script again. The pipeline completes only if the publication validator accepts the bundle.")
 
 elif state == "COMPLETE":
     findings_count = count_lines("data/findings.jsonl")

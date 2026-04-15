@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "REVIEW": 4}
 MERGE_OVERLAP_THRESHOLD = 0.5
 DESC_PREFIX_LEN = 50
+MAX_CLUSTER_SIZE = 12
+MAX_RULES_PER_CLUSTER = 2
 
 
 def load_findings(project_dir: str) -> list:
@@ -192,6 +194,69 @@ def cluster_cross_cutting(findings: list) -> list:
     return clusters
 
 
+def _normalize_text(value: str) -> str:
+    lowered = value.lower()
+    return " ".join("".join(ch if ch.isalnum() else " " for ch in lowered).split())
+
+
+def _finding_pattern_key(finding: dict) -> str:
+    for field in ("cross_cutting_group", "search_pattern", "current_code", "snippet", "description"):
+        value = finding.get(field, "")
+        if isinstance(value, str) and value.strip():
+            return _normalize_text(value)[:120]
+    return _normalize_text(str(finding.get("id", "")))
+
+
+def _should_split_cluster(cluster: dict) -> bool:
+    findings = cluster.get("findings", [])
+    if len(findings) > MAX_CLUSTER_SIZE:
+        return True
+    rules = {str(f.get("rule", "")) for f in findings if str(f.get("rule", ""))}
+    return len(rules) > MAX_RULES_PER_CLUSTER
+
+
+def _split_cluster_members(findings: list[dict]) -> list[list[dict]]:
+    by_rule: dict[str, list[dict]] = defaultdict(list)
+    for finding in findings:
+        by_rule[str(finding.get("rule", "UNKNOWN"))].append(finding)
+
+    split_groups: list[list[dict]] = []
+    for members in by_rule.values():
+        by_pattern: dict[str, list[dict]] = defaultdict(list)
+        for finding in members:
+            by_pattern[_finding_pattern_key(finding)].append(finding)
+        for subgroup in by_pattern.values():
+            ordered = sorted(
+                subgroup,
+                key=lambda finding: (
+                    str(finding.get("file", "")),
+                    int(finding.get("line", 0) or 0),
+                    str(finding.get("id", "")),
+                ),
+            )
+            if len(ordered) > MAX_CLUSTER_SIZE:
+                for start in range(0, len(ordered), MAX_CLUSTER_SIZE):
+                    split_groups.append(ordered[start:start + MAX_CLUSTER_SIZE])
+            else:
+                split_groups.append(ordered)
+    return [group for group in split_groups if group]
+
+
+def split_mixed_clusters(clusters: list[dict]) -> list[dict]:
+    result: list[dict] = []
+    for cluster in clusters:
+        if not _should_split_cluster(cluster):
+            result.append(cluster)
+            continue
+        for subgroup in _split_cluster_members(cluster["findings"]):
+            result.append({
+                "type": cluster["type"],
+                "files": sorted({finding.get("file", "") for finding in subgroup}),
+                "findings": subgroup,
+            })
+    return result
+
+
 # --- Merge overlapping clusters ---
 
 def finding_ids(cluster: dict) -> set:
@@ -362,6 +427,7 @@ def main() -> None:
 
     all_clusters = file_clusters + import_clusters + cross_clusters
     all_clusters = merge_overlapping(all_clusters)
+    all_clusters = split_mixed_clusters(all_clusters)
     formatted = format_clusters(all_clusters)
     stats = compute_stats(formatted)
 

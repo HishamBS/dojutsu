@@ -11,6 +11,7 @@ import re
 from collections import Counter
 from typing import Any
 
+from bundle_renderer import render_bundle, write_bundle_verdict
 from run_pipeline_lib import PHASE_FILE_SLUGS, SPEC_PHASE_EDGES, SPEC_PHASE_NODES, validate_null_fix_coverage
 
 
@@ -321,6 +322,8 @@ def validate_publication_contract(audit_dir: str, stage: str = "rinnegan") -> di
 
     findings = _load_jsonl(os.path.join(audit_dir, "data", "findings.jsonl"))
     stats = _load_json(os.path.join(audit_dir, "data", "audit-stats.json")) or {}
+    quality_gate = _load_json(os.path.join(audit_dir, "data", "quality-gate.json")) or {}
+    families = _load_json(os.path.join(audit_dir, "data", "finding-families.json")) or {}
     null_fix_validation = validate_null_fix_coverage(audit_dir)
     if null_fix_validation["triggered"]:
         errors.append(
@@ -351,6 +354,9 @@ def validate_publication_contract(audit_dir: str, stage: str = "rinnegan") -> di
             expected = stats_phase_counts.get(phase_id, 0)
             if derived != expected:
                 errors.append(f"audit-stats phase {phase_id}={expected} != findings-derived {derived}")
+        affected_files = len({str(finding.get("file", "")) for finding in findings if str(finding.get("file", ""))})
+        if int(stats.get("affected_files", 0)) != affected_files:
+            errors.append(f"audit-stats affected_files={stats.get('affected_files', 0)} != findings-derived {affected_files}")
 
     layer_names = [layer["name"] for layer in stats.get("layers", [])]
     if stage == "rinnegan":
@@ -396,6 +402,48 @@ def validate_publication_contract(audit_dir: str, stage: str = "rinnegan") -> di
                 continue
             if cluster_id not in cluster_ids:
                 errors.append(f"finding {finding.get('id', '')} references unknown cluster_id {cluster_id}")
+
+    root_ids = {
+        str(finding.get("id", ""))
+        for finding in findings
+        if finding.get("is_root_cause") is True
+    }
+    valid_ids = {str(finding.get("id", "")) for finding in findings}
+    for finding in findings:
+        parent_id = finding.get("parent_finding_id")
+        if not parent_id:
+            continue
+        if str(parent_id) not in valid_ids:
+            errors.append(f"finding {finding.get('id', '')} references missing parent_finding_id {parent_id}")
+        if str(parent_id) not in root_ids:
+            errors.append(f"finding {finding.get('id', '')} parent_finding_id {parent_id} is not marked root cause")
+
+    family_entries = families.get("families", []) if isinstance(families.get("families"), list) else []
+    for family in family_entries:
+        root_id = str(family.get("root_finding_id", ""))
+        if root_id and root_id not in valid_ids:
+            errors.append(f"family {family.get('id', '')} references missing root finding {root_id}")
+
+    if quality_gate:
+        blockers = quality_gate.get("blocker_explanation", {})
+        for tier_name, finding_ids in blockers.items():
+            if not isinstance(finding_ids, list):
+                errors.append(f"quality-gate blocker_explanation for {tier_name} is not a list")
+                continue
+            for finding_id in finding_ids:
+                if str(finding_id) not in valid_ids:
+                    errors.append(f"quality-gate {tier_name} blocker references missing finding id {finding_id}")
+        for tier_name, payload in (quality_gate.get("tiers") or {}).items():
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("status") == "FAIL" and not payload.get("blocker_finding_ids"):
+                errors.append(f"quality-gate tier {tier_name} FAIL has no blocker_finding_ids")
+
+    render_check = render_bundle(audit_dir, stage, check=True)
+    for relpath in render_check["mismatches"]:
+        errors.append(f"deterministic render drift: {relpath}")
+
+    write_bundle_verdict(audit_dir, stage, errors)
 
     return {
         "ok": len(errors) == 0,

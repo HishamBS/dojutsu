@@ -24,13 +24,27 @@ def _touch(path: str) -> None:
         fh.write("ok\n")
 
 
+def _write_bundle_verdict(audit_dir: str, stage: str, ok: bool = True) -> None:
+    path = os.path.join(audit_dir, "data", "bundle-verdict.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as fh:
+        json.dump({"stage": stage, "ok": ok, "errors": [], "source_hashes": {}}, fh)
+
+
 class TestDetectStage:
+    def test_rinnegan_stays_active_without_bundle_verdict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            audit_dir = os.path.join(tmp, "docs", "audit")
+            _touch(os.path.join(audit_dir, "master-audit.md"))
+            state = default_state()
+            assert detect_stage(tmp, state) == "RINNEGAN_ACTIVE"
+
     def test_byakugan_not_complete_without_executive_brief(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             audit_dir = os.path.join(tmp, "docs", "audit")
             deep_dir = os.path.join(audit_dir, "deep")
-            data_dir = os.path.join(audit_dir, "data")
             _touch(os.path.join(audit_dir, "master-audit.md"))
+            _write_bundle_verdict(audit_dir, "rinnegan")
             for filename in (
                 "dependency-graph.json",
                 "clusters.json",
@@ -48,6 +62,7 @@ class TestDetectStage:
             audit_dir = os.path.join(tmp, "docs", "audit")
             deep_dir = os.path.join(audit_dir, "deep")
             _touch(os.path.join(audit_dir, "master-audit.md"))
+            _write_bundle_verdict(audit_dir, "byakugan")
             for filename in (
                 "dependency-graph.json",
                 "clusters.json",

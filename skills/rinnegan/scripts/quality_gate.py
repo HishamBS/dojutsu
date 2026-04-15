@@ -53,6 +53,7 @@ SEVERITY_WEIGHTS: dict[str, float] = {
 class TierResult(TypedDict):
     status: str  # "PASS" | "WARN" | "FAIL"
     details: str
+    blocker_finding_ids: list[str]
 
 
 class QualitySummary(TypedDict):
@@ -164,15 +165,22 @@ def _evaluate_build_tier(
         return TierResult(
             status="PASS",
             details=f"0 type errors, 0 lint errors ({len(tier_f)} total build findings)",
+            blocker_finding_ids=[],
         )
     elif errors <= 5:
         return TierResult(
             status="WARN",
             details=f"{errors} build errors ({sev.get('CRITICAL', 0)} critical, {sev.get('HIGH', 0)} high)",
+            blocker_finding_ids=[],
         )
     return TierResult(
         status="FAIL",
         details=f"{errors} build errors ({sev.get('CRITICAL', 0)} critical, {sev.get('HIGH', 0)} high)",
+        blocker_finding_ids=[
+            str(finding.get("id", ""))
+            for finding in tier_f
+            if str(finding.get("severity", "")) in ("CRITICAL", "HIGH")
+        ],
     )
 
 
@@ -192,20 +200,32 @@ def _evaluate_security_tier(
         return TierResult(
             status="FAIL",
             details=f"{crits} CRITICAL vulnerabilities (max {max_crit})",
+            blocker_finding_ids=[
+                str(finding.get("id", ""))
+                for finding in tier_f
+                if str(finding.get("severity", "")) == "CRITICAL"
+            ],
         )
     if highs > max_high:
         return TierResult(
             status="FAIL",
             details=f"{highs} HIGH vulnerabilities (max {max_high})",
+            blocker_finding_ids=[
+                str(finding.get("id", ""))
+                for finding in tier_f
+                if str(finding.get("severity", "")) in ("CRITICAL", "HIGH")
+            ],
         )
     if crits + highs > 0:
         return TierResult(
             status="WARN",
             details=f"{crits} critical, {highs} high vulnerabilities (within thresholds)",
+            blocker_finding_ids=[],
         )
     return TierResult(
         status="PASS",
         details=f"0 security vulnerabilities",
+        blocker_finding_ids=[],
     )
 
 
@@ -224,13 +244,19 @@ def _evaluate_secrets_tier(
         return TierResult(
             status="FAIL",
             details=f"{secret_count} secrets/env issues detected (max {max_secrets})",
+            blocker_finding_ids=[
+                str(finding.get("id", ""))
+                for finding in tier_f
+                if str(finding.get("severity", "")) in ("CRITICAL", "HIGH")
+            ],
         )
     if len(tier_f) > 0:
         return TierResult(
             status="WARN",
             details=f"{len(tier_f)} env-related findings (no critical secrets)",
+            blocker_finding_ids=[],
         )
-    return TierResult(status="PASS", details="No secrets or env issues detected")
+    return TierResult(status="PASS", details="No secrets or env issues detected", blocker_finding_ids=[])
 
 
 def _evaluate_coverage_tier(
@@ -243,46 +269,58 @@ def _evaluate_coverage_tier(
         return TierResult(
             status="WARN",
             details="No coverage data available",
+            blocker_finding_ids=[],
         )
     cov: float = health["coverage_line_pct"]
     if cov >= min_cov:
         return TierResult(
             status="PASS",
             details=f"{cov:.1f}% line coverage (threshold {min_cov}%)",
+            blocker_finding_ids=[],
         )
     if cov >= min_cov * 0.8:  # within 80% of threshold = WARN
         return TierResult(
             status="WARN",
             details=f"{cov:.1f}% line coverage (threshold {min_cov}%, close)",
+            blocker_finding_ids=[],
         )
     return TierResult(
         status="FAIL",
         details=f"{cov:.1f}% line coverage (below {min_cov}% threshold)",
+        blocker_finding_ids=[],
     )
 
 
 def _evaluate_duplication_tier(
+    findings: list[dict[str, Any]],
     health: dict[str, Any] | None,
     thresholds: dict[str, Any],
 ) -> TierResult:
     """Evaluate the Code Duplication tier."""
     max_dup: float = thresholds.get("max_duplication_pct", 5.0)
     if health is None or "duplication_pct" not in health:
-        return TierResult(status="WARN", details="No duplication data available")
+        return TierResult(status="WARN", details="No duplication data available", blocker_finding_ids=[])
     dup: float = health["duplication_pct"]
     if dup <= max_dup:
         return TierResult(
             status="PASS",
             details=f"{dup:.1f}% duplication (max {max_dup}%)",
+            blocker_finding_ids=[],
         )
     if dup <= max_dup * 1.5:  # up to 1.5x threshold = WARN
         return TierResult(
             status="WARN",
             details=f"{dup:.1f}% duplication (max {max_dup}%, elevated)",
+            blocker_finding_ids=[],
         )
     return TierResult(
         status="FAIL",
         details=f"{dup:.1f}% duplication (exceeds {max_dup}% threshold)",
+        blocker_finding_ids=[
+            str(finding.get("id", ""))
+            for finding in findings
+            if str(finding.get("rule", "")) == "R01" and str(finding.get("severity", "")) in ("CRITICAL", "HIGH")
+        ],
     )
 
 
@@ -296,15 +334,21 @@ def _evaluate_complexity_tier(
     high_count = sev.get("CRITICAL", 0) + sev.get("HIGH", 0)
 
     if high_count == 0 and len(tier_f) == 0:
-        return TierResult(status="PASS", details="No complexity issues detected")
+        return TierResult(status="PASS", details="No complexity issues detected", blocker_finding_ids=[])
     if high_count == 0:
         return TierResult(
             status="WARN",
             details=f"{len(tier_f)} complexity findings (none critical/high)",
+            blocker_finding_ids=[],
         )
     return TierResult(
         status="FAIL",
         details=f"{high_count} high-severity complexity issues out of {len(tier_f)} total",
+        blocker_finding_ids=[
+            str(finding.get("id", ""))
+            for finding in tier_f
+            if str(finding.get("severity", "")) in ("CRITICAL", "HIGH")
+        ],
     )
 
 
@@ -317,15 +361,21 @@ def _evaluate_architecture_tier(
     high_count = sev.get("CRITICAL", 0) + sev.get("HIGH", 0)
 
     if high_count == 0 and len(tier_f) == 0:
-        return TierResult(status="PASS", details="No architecture violations detected")
+        return TierResult(status="PASS", details="No architecture violations detected", blocker_finding_ids=[])
     if high_count == 0:
         return TierResult(
             status="WARN",
             details=f"{len(tier_f)} architecture findings (none critical/high)",
+            blocker_finding_ids=[],
         )
     return TierResult(
         status="FAIL",
         details=f"{high_count} high-severity architecture violations out of {len(tier_f)} total",
+        blocker_finding_ids=[
+            str(finding.get("id", ""))
+            for finding in tier_f
+            if str(finding.get("severity", "")) in ("CRITICAL", "HIGH")
+        ],
     )
 
 
@@ -397,7 +447,7 @@ def evaluate_quality_gate(
         "security": _evaluate_security_tier(findings, effective),
         "secrets": _evaluate_secrets_tier(findings, effective),
         "coverage": _evaluate_coverage_tier(health, effective),
-        "duplication": _evaluate_duplication_tier(health, effective),
+        "duplication": _evaluate_duplication_tier(findings, health, effective),
         "complexity": _evaluate_complexity_tier(findings, effective),
         "architecture": _evaluate_architecture_tier(findings),
     }
@@ -449,6 +499,11 @@ def evaluate_quality_gate(
         summary=summary,
         trend=trend_data,
     )
+    result["blocker_explanation"] = {
+        tier_name: payload["blocker_finding_ids"]
+        for tier_name, payload in tiers.items()
+        if payload["status"] == "FAIL" and payload["blocker_finding_ids"]
+    }
 
     # Write to disk
     if audit_dir:
