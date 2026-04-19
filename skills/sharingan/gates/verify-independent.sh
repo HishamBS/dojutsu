@@ -45,6 +45,25 @@ if [[ -f "$AGENT_CAPS" ]]; then
   SSOT_MODEL=$(load_capability_value "$AGENT_CAPS" model 2>/dev/null || true)
 fi
 
+# ── Verdict-policy SSOT (schema path + rules) ──
+# Gate 3 structured-output enforcement: Codex takes --output-schema <FILE>,
+# Claude takes --json-schema <json-string>. Both reject non-conforming
+# responses at the engine API boundary — eliminating stylistic drift
+# ("could be clearer") at its source. Gemini lacks a first-class schema
+# flag and falls back to prompt + post-validate.
+SHARINGAN_SKILL_CONFIG_DIR="$(cd "$SCRIPT_DIR/../config" 2>/dev/null && pwd || echo "")"
+VERDICT_POLICY_FILE="${SHARINGAN_SKILL_CONFIG_DIR:-}/verdict-policy.json"
+GATE3_SCHEMA_FILE=""
+if [[ -f "$VERDICT_POLICY_FILE" ]] && command -v jq >/dev/null 2>&1; then
+  schema_rel=$(jq -r '.schema_path // empty' "$VERDICT_POLICY_FILE" 2>/dev/null || true)
+  if [[ -n "$schema_rel" ]]; then
+    candidate="$SCRIPT_DIR/../$schema_rel"
+    if [[ -f "$candidate" ]]; then
+      GATE3_SCHEMA_FILE="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"
+    fi
+  fi
+fi
+
 process_command() {
   local pid="$1"
   [[ -n "$pid" ]] || return 0
@@ -304,10 +323,18 @@ run_direct_cli_once() {
   local engine="$1"
   local model="$2"
 
+  # Gate 3 structured-output enforcement. When GATE3_SCHEMA_FILE is set,
+  # we pass it to the engine's native schema flag (engine-boundary
+  # enforcement, not parse-time patching). If unset, fall back to
+  # free-form output (legacy behavior).
   case "$engine" in
     claude)
       if command -v claude >/dev/null 2>&1; then
-        echo "$VERIFIER_PROMPT" | claude --print 2>&1 | tee "$CLI_OUTPUT_FILE"
+        local CLAUDE_ARGS=(--print)
+        if [[ -n "$GATE3_SCHEMA_FILE" && -f "$GATE3_SCHEMA_FILE" ]]; then
+          CLAUDE_ARGS+=(--output-format json --json-schema "$(cat "$GATE3_SCHEMA_FILE")")
+        fi
+        echo "$VERIFIER_PROMPT" | claude "${CLAUDE_ARGS[@]}" 2>&1 | tee "$CLI_OUTPUT_FILE"
       else
         echo "ERROR: claude CLI not found" >&2
         return 1
@@ -319,6 +346,9 @@ run_direct_cli_once() {
         if [[ -n "$model" ]]; then
           CODEX_ARGS+=(-m "$model")
         fi
+        if [[ -n "$GATE3_SCHEMA_FILE" && -f "$GATE3_SCHEMA_FILE" ]]; then
+          CODEX_ARGS+=(--output-schema "$GATE3_SCHEMA_FILE")
+        fi
         codex "${CODEX_ARGS[@]}" "$VERIFIER_PROMPT" 2>&1 | tee "$CLI_OUTPUT_FILE"
       else
         echo "ERROR: codex CLI not found" >&2
@@ -327,7 +357,9 @@ run_direct_cli_once() {
       ;;
     gemini)
       if command -v gemini >/dev/null 2>&1; then
-        GEMINI_ARGS=(--yolo -p "$VERIFIER_PROMPT")
+        # Gemini's CLI lacks a first-class schema flag; use JSON output
+        # and rely on prompt-instructed structure + post-validate.
+        GEMINI_ARGS=(--yolo -o json -p "$VERIFIER_PROMPT")
         if [[ -n "$model" ]]; then
           GEMINI_ARGS=(-m "$model" "${GEMINI_ARGS[@]}")
         fi

@@ -109,7 +109,8 @@ if os.path.exists(runtime_file):
         pass
 
 # Reconcile
-issues = []
+issues = []       # blocking — prevent CLEAR verdict
+advisories = []   # non-blocking — surface in verdict output for humans
 all_reqs = set(list(builder_claims.keys()) + list(verifier_ratings.keys()))
 expected_verifier_ids = sorted(
     req_id for req_id, claim in builder_claims.items()
@@ -127,11 +128,14 @@ for req_id in sorted(all_reqs):
     b_status = builder.get('status', 'NOT_CHECKED')
     v_rating = verifier.get('rating', 'NOT_CHECKED')
 
-    # Disagreement detection
+    # Disagreement detection — per verdict-policy.json, only SHELL/MISSING are
+    # blocking disagreements. PARTIAL surfaces as advisory (see advisories list
+    # below). This breaks the LLM-rescope loop where the verifier invents new
+    # PARTIAL nits each run, because PARTIAL no longer triggers fix cycles.
     if b_status == 'VERIFIED' and v_rating in ('SHELL', 'MISSING'):
         issues.append(f"{req_id}: Builder=VERIFIED but Verifier={v_rating} — {verifier.get('evidence', 'no evidence')}")
     elif b_status == 'VERIFIED' and v_rating == 'PARTIAL':
-        issues.append(f"{req_id}: Builder=VERIFIED but Verifier=PARTIAL — {verifier.get('evidence', 'no evidence')}")
+        advisories.append(f"{req_id}: Builder=VERIFIED but Verifier=PARTIAL (advisory; not blocking) — {verifier.get('evidence', 'no evidence')}")
 
 # Check for blocking conditions
 blocked = False
@@ -194,11 +198,16 @@ if blocked:
         "version": "1.0",
         "timestamp": timestamp,
         "blocked_at": blocked_at,
-        "remaining_issues": remaining
+        "remaining_issues": remaining,
+        "advisories": advisories,
     }
     print(f"VERDICT: BLOCKED at {blocked_at}")
     for r in remaining:
         print(f"  - {r}")
+    if advisories:
+        print(f"  advisories ({len(advisories)}, non-blocking):")
+        for a in advisories[:5]:
+            print(f"    · {a}")
 else:
     import subprocess
     head_commit = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
@@ -229,6 +238,7 @@ else:
                 "requirements_expected": len(expected_verifier_ids),
                 "requirements_rated": len(verifier_ratings),
                 "requirements_missing": len(missing_verifier_ids),
+                "partial_advisory_count": sum(1 for a in advisories if 'PARTIAL' in a),
             },
             "gate_4": {
                 "status": "PASS" if not runtime_file or runtime_failures == 0 else "FAIL",
@@ -241,12 +251,17 @@ else:
                 "sources_aligned": len(issues) == 0,
                 "final_deterministic": "PASS" if determ_exit == 0 else "FAIL"
             }
-        }
+        },
+        "advisories": advisories,
     }
     print("VERDICT: CLEAR")
     print(f"  Requirements: {len(builder_claims)} checked, {g1_verified} verified")
     print(f"  Verifier: {verifier_summary}")
     print(f"  Runtime: {len(runtime_results)} checks, {runtime_failures} failures")
+    if advisories:
+        print(f"  Advisories (non-blocking, {len(advisories)}):")
+        for a in advisories[:5]:
+            print(f"    · {a}")
 
 # ── HMAC Verdict Integrity ──
 # Sign the verdict so enforce.sh can detect forgery.

@@ -198,17 +198,6 @@ FAIL -> auto-fix -> re-run Gate 0 -> re-check. Max 3 iterations.
 
 This is the most critical gate. A SEPARATE agent with ZERO builder context verifies the work independently.
 
-### Known trap — Gate 3 rescope loop
-
-The independent verifier is LLM-driven and **rescopes each run**. Every iteration it may raise NEW literal-compliance nits that weren't flagged the time before — stylistic wording, extra caveats, arbitrarily-tight "could be clearer" suggestions. Chasing these indefinitely is an infinite-loop trap; you will never reach a fixed point.
-
-**Rule: after ONE clean iteration, move on.** The contract is:
-1. First run finds real SHELL/MISSING → auto-fix → re-run.
-2. Second run finds *only* PARTIAL nits that weren't in pass 1 → this is rescope drift, not a real defect. Proceed directly to `reconcile.sh` and `enforce.sh`.
-3. Do NOT chase Gate 3 partials past the first pass. If Gate 3 flips from SHELL/MISSING → PARTIAL → CLEAN is not achievable, treat the PARTIAL pass as the ceiling and let reconciliation resolve.
-
-This is a pragma, not a safety bypass — the other gates (Gate 0 deterministic, Gate 1 evidence-based, Gate 4 runtime) still catch real defects. Gate 3's role is to catch SHELL/MISSING specifically; once those are clean, its job is done.
-
 ### How to run:
 
 ```bash
@@ -229,10 +218,15 @@ $SKILL_DIR/gates/verify-independent.sh \
 6. Shell detection uses language-specific checks (see verify-independent.sh for full checklist per language)
 7. Output: `$CACHE_DIR/independent-review-${PROJECT_HASH}.json`
 
-### Disagreement handling:
-- Verifier finds SHELL/MISSING where builder found VERIFIED -> auto-fix -> verifier RE-RUNS
-- Verifier finds PARTIAL where builder found VERIFIED -> auto-fix for partial aspects
-- Max 2 fix-verify cycles. Still SHELL/MISSING after 2 cycles -> BLOCKED
+### Verdict handling (machine-enforced via `config/verdict-policy.json`)
+
+The verdict-policy SSOT at `$SKILL_DIR/config/verdict-policy.json` governs ALL rules. Do not hand-code verdict logic.
+
+- **Structured output, engine-boundary enforcement.** The verifier's response shape is constrained at the LLM API boundary by `config/schemas/gate3-verdict.schema.json`. Codex receives it via `--output-schema <file>`; Claude via `--output-format json --json-schema <inline>`. The engine's runtime rejects non-conforming responses. The parser is a thin validator — deviation means engine flake, not content sloppiness.
+- **PARTIAL requires verifiable grounding.** A PARTIAL entry MUST include `unmet_acceptance_criterion` copied verbatim from the plan file. `verify-independent.sh` groundedness-checks this text against the plan via grep; entries that cite invented criteria are downgraded to IMPLEMENTED. The LLM cannot fabricate stylistic nits because the schema forces them to anchor each PARTIAL to a specific plan bullet.
+- **Auto-fix triggers only on `SHELL` and `MISSING`.** Per `verdict-policy.json::gate_3.auto_fix_triggers`. PARTIAL is advisory and never triggers another fix/re-verify cycle — this is the structural fix for LLM rescope drift.
+- **Blocking verdicts: `SHELL`, `MISSING` only.** Per `verdict-policy.json::gate_3.blocking_verdicts`. PARTIAL surfaces in `reconcile.sh`'s verdict JSON under `advisories` (non-blocking human-visible signal).
+- **Max cycles: 2** per `verdict-policy.json::gate_3.max_fix_cycles`. After 2 unresolved SHELL/MISSING cycles, verdict → BLOCKED.
 
 **This gate runs in FOREGROUND. Results MUST be awaited before proceeding.**
 

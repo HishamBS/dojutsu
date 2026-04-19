@@ -1,0 +1,30 @@
+{
+  "_description": "SSOT for Sharingan verdict rules. Every gate script reads from here; rules are not duplicated in SKILL.md or individual scripts. See schemas/gate3-verdict.schema.json for the companion structured-output contract.",
+  "version": 1,
+  "schema_path": "config/schemas/gate3-verdict.schema.json",
+  "gate_3": {
+    "_description": "Independent Verification. LLM-driven fresh-context verifier with structured output + plan-grounded PARTIAL. Structured output is enforced at the engine boundary (Codex --output-schema, Claude --json-schema). The verifier physically cannot emit a response that doesn't match schemas/gate3-verdict.schema.json.",
+    "auto_fix_triggers": ["SHELL", "MISSING"],
+    "blocking_verdicts": ["SHELL", "MISSING"],
+    "advisory_verdicts": ["PARTIAL"],
+    "max_fix_cycles": 2,
+    "groundedness_checks": {
+      "partial_criterion_must_appear_in_plan": true,
+      "_description": "PARTIAL.unmet_acceptance_criterion must appear verbatim in the plan file. Enforced by grep in verify-independent.sh. If not found, the engine flaked (schema followed but value invented) — retry once, then downgrade to IMPLEMENTED. Prevents the LLM from inventing fake criteria under schema pressure."
+    },
+    "on_schema_violation": {
+      "action": "retry_once_then_abort",
+      "_description": "Structured output failure is an engine-level fault, not a content fault. Schema violations are exceedingly rare with native engine support; treat as transient, retry once."
+    },
+    "enforcement_level": {
+      "codex": "engine",
+      "claude": "engine",
+      "gemini": "prompt_plus_parse",
+      "_description": "Codex --output-schema and Claude --json-schema give engine-boundary structured output. Gemini's CLI does not expose a first-class schema flag (only -o json), so its Gate 3 path falls back to prompt-instructed JSON + post-response schema validation. Lower guarantee but still stricter than free-form text."
+    }
+  },
+  "gate_0": { "max_fix_cycles": 3 },
+  "gate_1": { "max_fix_cycles": 3 },
+  "gate_2": { "max_fix_cycles": 3 },
+  "gate_4": { "max_fix_cycles": 2 }
+}

@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spsm.local/sharingan/gate3-verdict.schema.json",
+  "title": "Sharingan Gate 3 Independent Verifier Output",
+  "description": "Structured output contract for the fresh-context independent verifier. Passed to Codex via --output-schema and to Claude via --json-schema. The verifier MUST emit JSON matching this schema; the engine runtime rejects non-matching responses, eliminating stylistic 'could be clearer' nits at the source. PARTIAL entries MUST cite a plan criterion verbatim so the downstream groundedness check can verify it appears in the plan file.",
+  "type": "object",
+  "required": ["requirements"],
+  "additionalProperties": false,
+  "properties": {
+    "requirements": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["req_id", "verdict"],
+            "properties": {
+              "req_id": { "type": "string", "minLength": 1 },
+              "verdict": { "const": "IMPLEMENTED" }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["req_id", "verdict", "file", "evidence"],
+            "properties": {
+              "req_id": { "type": "string", "minLength": 1 },
+              "verdict": { "const": "SHELL" },
+              "file": { "type": "string", "minLength": 1 },
+              "line": { "type": "integer", "minimum": 1 },
+              "evidence": { "type": "string", "minLength": 8, "description": "Concrete reason the code is a stub/shell (e.g. 'body returns null', 'function is empty')." }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["req_id", "verdict", "evidence"],
+            "properties": {
+              "req_id": { "type": "string", "minLength": 1 },
+              "verdict": { "const": "MISSING" },
+              "evidence": { "type": "string", "minLength": 8, "description": "What was expected and where it should have been." }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "req_id",
+              "verdict",
+              "unmet_acceptance_criterion",
+              "file",
+              "line",
+              "concrete_deficiency"
+            ],
+            "properties": {
+              "req_id": { "type": "string", "minLength": 1 },
+              "verdict": { "const": "PARTIAL" },
+              "unmet_acceptance_criterion": {
+                "type": "string",
+                "minLength": 4,
+                "description": "EXACT text copied verbatim from the plan. The script groundedness-checks that this substring appears literally in the plan file. Paraphrasing, interpretation, or invented criteria are rejected."
+              },
+              "file": { "type": "string", "minLength": 1 },
+              "line": { "type": "integer", "minimum": 1 },
+              "concrete_deficiency": {
+                "type": "string",
+                "minLength": 12,
+                "description": "How the code at file:line fails to meet the copied criterion. Must cite specific behavior, field, method, or value (not 'could be clearer', 'consider improving', 'stylistic'). Qualitative-only reasons are rejected by the groundedness check."
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
