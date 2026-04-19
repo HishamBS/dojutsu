@@ -45,13 +45,103 @@ if [[ -f "$AGENT_CAPS" ]]; then
   SSOT_MODEL=$(load_capability_value "$AGENT_CAPS" model 2>/dev/null || true)
 fi
 
+process_command() {
+  local pid="$1"
+  [[ -n "$pid" ]] || return 0
+  ps -o command= -p "$pid" 2>/dev/null | head -n 1
+}
+
+detect_current_harness() {
+  local self_command=""
+  local parent_pid=""
+  local parent_command=""
+
+  if [[ -n "${CODEX_THREAD_ID:-}" || -n "${CODEX_CI:-}" ]]; then
+    echo "codex"
+    return
+  fi
+
+  if [[ -n "${CODEX_COMPANION_SESSION_ID:-}" || -n "${CLAUDE_PLUGIN_DATA:-}" || -n "${CLAUDE_ENV_FILE:-}" || -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
+    echo "claude"
+    return
+  fi
+
+  self_command=$(process_command "$$")
+  parent_pid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d '[:space:]')
+  parent_command=$(process_command "$parent_pid")
+
+  if [[ "$self_command $parent_command" =~ (^|[[:space:]/])codex([[:space:]]|$) ]]; then
+    echo "codex"
+    return
+  fi
+
+  if [[ "$self_command $parent_command" =~ (^|[[:space:]/])claude([[:space:]]|$) ]]; then
+    echo "claude"
+    return
+  fi
+
+  echo "unknown"
+}
+
+choose_default_engine() {
+  local current_harness="$1"
+
+  case "$current_harness" in
+    codex)
+      if command -v claude >/dev/null 2>&1; then
+        echo "claude"
+        return
+      fi
+      ;;
+    claude)
+      if command -v codex >/dev/null 2>&1; then
+        echo "codex"
+        return
+      fi
+      ;;
+  esac
+
+  if [[ -n "$SSOT_ENGINE" ]]; then
+    echo "$SSOT_ENGINE"
+  else
+    echo "codex"
+  fi
+}
+
+choose_fallback_engine() {
+  local current_harness="$1"
+  local attempted_engine="$2"
+
+  case "$current_harness" in
+    codex)
+      if [[ "$attempted_engine" != "codex" ]] && command -v codex >/dev/null 2>&1; then
+        echo "codex"
+        return
+      fi
+      ;;
+    claude)
+      if [[ "$attempted_engine" != "claude" ]] && command -v claude >/dev/null 2>&1; then
+        echo "claude"
+        return
+      fi
+      ;;
+  esac
+
+  if [[ -n "$SSOT_ENGINE" && "$SSOT_ENGINE" != "$attempted_engine" ]]; then
+    echo "$SSOT_ENGINE"
+  fi
+}
+
 # ── Parse args ──
 PLAN_FILE=""
 SHARINGAN_BASE="HEAD~1"
-ENGINE="${SHARINGAN_VERIFIER_ENGINE:-${SSOT_ENGINE:-codex}}"
+CURRENT_HARNESS="$(detect_current_harness)"
+ENGINE=""
 MODEL="${SHARINGAN_VERIFIER_MODEL:-}"
+TRANSPORT="${SHARINGAN_VERIFY_TRANSPORT:-direct}"
 CLI_ENGINE_SET=0
 CLI_MODEL_SET=0
+ENGINE_SOURCE="auto"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -59,9 +149,32 @@ while [[ $# -gt 0 ]]; do
     --base) SHARINGAN_BASE="$2"; shift 2 ;;
     --engine) ENGINE="$2"; CLI_ENGINE_SET=1; shift 2 ;;
     --model) MODEL="$2"; CLI_MODEL_SET=1; shift 2 ;;
+    --transport) TRANSPORT="$2"; shift 2 ;;
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
+
+case "$TRANSPORT" in
+  auto|mux|direct) ;;
+  *)
+    echo "ERROR: Unsupported transport '$TRANSPORT'. Expected one of: auto, mux, direct" >&2
+    exit 1
+    ;;
+esac
+
+if [[ $CLI_ENGINE_SET -eq 1 ]]; then
+  ENGINE_SOURCE="cli"
+elif [[ -n "${SHARINGAN_VERIFIER_ENGINE:-}" ]]; then
+  ENGINE="${SHARINGAN_VERIFIER_ENGINE}"
+  ENGINE_SOURCE="env"
+else
+  ENGINE="$(choose_default_engine "$CURRENT_HARNESS")"
+  if [[ -n "$SSOT_ENGINE" && "$ENGINE" == "$SSOT_ENGINE" ]]; then
+    ENGINE_SOURCE="ssot"
+  else
+    ENGINE_SOURCE="auto-opposite-harness"
+  fi
+fi
 
 if [[ $CLI_MODEL_SET -eq 0 && -z "${SHARINGAN_VERIFIER_MODEL:-}" ]]; then
   if [[ -n "$SSOT_MODEL" && "$ENGINE" == "${SSOT_ENGINE:-}" ]]; then
@@ -166,6 +279,9 @@ JSON format:
 }"
 
 echo "Spawning independent verifier via engine: $ENGINE, model: ${MODEL:-<default>}"
+echo "Current harness: $CURRENT_HARNESS"
+echo "Engine source: $ENGINE_SOURCE"
+echo "Transport: $TRANSPORT"
 echo "Plan: $PLAN_FILE"
 echo "Base: $SHARINGAN_BASE"
 echo "Languages: $LANGUAGES"
@@ -184,52 +300,140 @@ if [[ $COMPUTED_TURNS -gt 120 ]]; then COMPUTED_TURNS=120; fi
 COMPUTED_TIMEOUT_SEC=$(( COMPUTED_TURNS * 5 + 30 ))
 echo "Modified files: $FILE_COUNT → max-turns: $COMPUTED_TURNS, timeout: ${COMPUTED_TIMEOUT_SEC}s"
 
-run_direct_cli() {
-  echo "Falling back to direct CLI..."
-  case "$ENGINE" in
+run_direct_cli_once() {
+  local engine="$1"
+  local model="$2"
+
+  case "$engine" in
     claude)
       if command -v claude >/dev/null 2>&1; then
         echo "$VERIFIER_PROMPT" | claude --print 2>&1 | tee "$CLI_OUTPUT_FILE"
       else
         echo "ERROR: claude CLI not found" >&2
-        exit 1
+        return 1
       fi
       ;;
     codex)
       if command -v codex >/dev/null 2>&1; then
         CODEX_ARGS=(exec --full-auto -C "$(pwd)")
-        if [[ -n "$MODEL" ]]; then
-          CODEX_ARGS+=(-m "$MODEL")
+        if [[ -n "$model" ]]; then
+          CODEX_ARGS+=(-m "$model")
         fi
         codex "${CODEX_ARGS[@]}" "$VERIFIER_PROMPT" 2>&1 | tee "$CLI_OUTPUT_FILE"
       else
         echo "ERROR: codex CLI not found" >&2
-        exit 1
+        return 1
       fi
       ;;
     gemini)
       if command -v gemini >/dev/null 2>&1; then
         GEMINI_ARGS=(--yolo -p "$VERIFIER_PROMPT")
-        if [[ -n "$MODEL" ]]; then
-          GEMINI_ARGS=(-m "$MODEL" "${GEMINI_ARGS[@]}")
+        if [[ -n "$model" ]]; then
+          GEMINI_ARGS=(-m "$model" "${GEMINI_ARGS[@]}")
         fi
         gemini "${GEMINI_ARGS[@]}" 2>&1 | tee "$CLI_OUTPUT_FILE"
       else
         echo "ERROR: gemini CLI not found" >&2
-        exit 1
+        return 1
       fi
       ;;
     *)
       echo "ERROR: Unknown engine '$ENGINE' and agent-mux not available" >&2
-      exit 1
+      return 1
       ;;
   esac
+}
+
+resolve_model_for_engine() {
+  local engine="$1"
+
+  if [[ $CLI_MODEL_SET -eq 1 || -n "${SHARINGAN_VERIFIER_MODEL:-}" ]]; then
+    printf '%s\n' "$MODEL"
+    return
+  fi
+
+  if [[ -n "$SSOT_MODEL" && "$engine" == "${SSOT_ENGINE:-}" ]]; then
+    printf '%s\n' "$SSOT_MODEL"
+  else
+    printf '\n'
+  fi
+}
+
+run_direct_cli() {
+  local selected_engine="$ENGINE"
+  local selected_model="$MODEL"
+  local fallback_engine=""
+  local fallback_model=""
+
+  echo "Falling back to direct CLI..."
+  if run_direct_cli_once "$selected_engine" "$selected_model"; then
+    ENGINE="$selected_engine"
+    MODEL="$selected_model"
+    return
+  fi
+
+  if [[ "$ENGINE_SOURCE" != "auto-opposite-harness" ]]; then
+    exit 1
+  fi
+
+  fallback_engine="$(choose_fallback_engine "$CURRENT_HARNESS" "$selected_engine")"
+  if [[ -z "$fallback_engine" ]]; then
+    exit 1
+  fi
+
+  fallback_model="$(resolve_model_for_engine "$fallback_engine")"
+  echo "WARN: Auto-selected verifier engine '$selected_engine' failed; retrying with '$fallback_engine'" >&2
+  : > "$CLI_OUTPUT_FILE"
+  rm -f "$WORK_REVIEW_FILE"
+
+  if ! run_direct_cli_once "$fallback_engine" "$fallback_model"; then
+    exit 1
+  fi
+
+  ENGINE="$fallback_engine"
+  MODEL="$fallback_model"
+  ENGINE_SOURCE="fallback-current-harness"
 }
 
 abort_mux_dispatch() {
   local dispatch_id="$1"
   [[ -z "$dispatch_id" ]] && return 0
   (agent-mux steer "$dispatch_id" abort >/dev/null 2>&1 || true) &
+}
+
+mux_artifact_has_review_output() {
+  local artifact_dir="$1"
+  [[ -n "$artifact_dir" && -d "$artifact_dir" ]] || return 1
+
+  python3 - "$artifact_dir" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+artifact_dir = Path(sys.argv[1])
+ignored = {
+    "_dispatch_ref.json",
+    "events.jsonl",
+    "host.pid",
+    "inbox.md",
+    "status.json",
+    "stdin.pipe",
+}
+
+for candidate in artifact_dir.iterdir():
+    if candidate.name in ignored or not candidate.is_file():
+        continue
+    if candidate.suffix != ".json":
+        continue
+    try:
+        payload = json.loads(candidate.read_text())
+    except Exception:
+        continue
+    if isinstance(payload, dict) and isinstance(payload.get("requirements"), list) and isinstance(payload.get("summary"), dict):
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
 }
 
 review_file_is_valid() {
@@ -331,6 +535,7 @@ poll_mux_result() {
   local dispatch_id="$1"
   local artifact_dir="$2"
   local wait_limit=""
+  local startup_limit="${SHARINGAN_AGENT_MUX_STARTUP_SEC:-20}"
   if [[ -n "${SHARINGAN_AGENT_MUX_WAIT_SEC:-}" ]]; then
     wait_limit="$SHARINGAN_AGENT_MUX_WAIT_SEC"
   else
@@ -345,6 +550,7 @@ poll_mux_result() {
   local mux_result=""
   local mux_state=""
   local inspect_result=""
+  local startup_checked=0
 
   while [[ $elapsed -lt $wait_limit ]]; do
     mux_result=$(agent-mux result "$dispatch_id" --json --no-wait 2>/dev/null || echo "")
@@ -371,6 +577,14 @@ poll_mux_result() {
         ;;
     esac
 
+    if [[ $startup_checked -eq 0 && $elapsed -ge $startup_limit ]]; then
+      if ! review_file_is_valid "$WORK_REVIEW_FILE" && ! mux_artifact_has_review_output "$artifact_dir"; then
+        printf '%s\n' '{"status":"failed","error":"agent-mux remained in initialization without producing verifier artifacts","metadata":{"source":"mux_startup_healthcheck"}}'
+        return 0
+      fi
+      startup_checked=1
+    fi
+
     if [[ -n "$artifact_dir" && -f "$artifact_dir/status.json" ]]; then
       mux_state=$(jq -r '.state // ""' "$artifact_dir/status.json" 2>/dev/null || echo "")
       case "$mux_state" in
@@ -389,7 +603,9 @@ poll_mux_result() {
 }
 
 # ── Dispatch via agent-mux if available ──
-if command -v agent-mux >/dev/null 2>&1; then
+if [[ "$TRANSPORT" == "direct" ]]; then
+  run_direct_cli
+elif command -v agent-mux >/dev/null 2>&1; then
   echo "Dispatching via agent-mux..."
   MUX_ARGS=(--stream --engine "$ENGINE" --effort high --cwd "$(pwd)" --max-turns "$COMPUTED_TURNS" --timeout "$COMPUTED_TIMEOUT_SEC" --async)
   if [[ -n "$MODEL" ]]; then
@@ -411,6 +627,10 @@ if command -v agent-mux >/dev/null 2>&1; then
 
   if [[ "$MUX_STATUS" != "completed" ]]; then
     echo "WARN: agent-mux dispatch failed (status=$MUX_STATUS): $MUX_ERROR" >&2
+    abort_mux_dispatch "$MUX_DISPATCH_ID"
+    run_direct_cli
+  elif ! review_file_is_valid "$WORK_REVIEW_FILE" && ! mux_artifact_has_review_output "$MUX_ARTIFACT_DIR"; then
+    echo "WARN: agent-mux completed without producing verifier artifacts; falling back to direct CLI" >&2
     abort_mux_dispatch "$MUX_DISPATCH_ID"
     run_direct_cli
   elif [[ $MUX_EXIT -ne 0 ]]; then
