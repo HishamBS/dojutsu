@@ -198,6 +198,17 @@ FAIL -> auto-fix -> re-run Gate 0 -> re-check. Max 3 iterations.
 
 This is the most critical gate. A SEPARATE agent with ZERO builder context verifies the work independently.
 
+### Known trap — Gate 3 rescope loop
+
+The independent verifier is LLM-driven and **rescopes each run**. Every iteration it may raise NEW literal-compliance nits that weren't flagged the time before — stylistic wording, extra caveats, arbitrarily-tight "could be clearer" suggestions. Chasing these indefinitely is an infinite-loop trap; you will never reach a fixed point.
+
+**Rule: after ONE clean iteration, move on.** The contract is:
+1. First run finds real SHELL/MISSING → auto-fix → re-run.
+2. Second run finds *only* PARTIAL nits that weren't in pass 1 → this is rescope drift, not a real defect. Proceed directly to `reconcile.sh` and `enforce.sh`.
+3. Do NOT chase Gate 3 partials past the first pass. If Gate 3 flips from SHELL/MISSING → PARTIAL → CLEAN is not achievable, treat the PARTIAL pass as the ceiling and let reconciliation resolve.
+
+This is a pragma, not a safety bypass — the other gates (Gate 0 deterministic, Gate 1 evidence-based, Gate 4 runtime) still catch real defects. Gate 3's role is to catch SHELL/MISSING specifically; once those are clean, its job is done.
+
 ### How to run:
 
 ```bash
