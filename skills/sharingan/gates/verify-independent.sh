@@ -64,6 +64,53 @@ if [[ -f "$VERDICT_POLICY_FILE" ]] && command -v jq >/dev/null 2>&1; then
   fi
 fi
 
+gate3_schema_matches_prompt_contract() {
+  local schema_file="$1"
+  [[ -n "$schema_file" && -f "$schema_file" ]] || return 1
+
+  python3 - "$schema_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+schema_path = Path(sys.argv[1])
+schema = json.loads(schema_path.read_text())
+properties = schema.get("properties", {})
+requirements = properties.get("requirements", {})
+summary = properties.get("summary", {})
+items = requirements.get("items", {})
+
+if "oneOf" in items:
+    raise SystemExit(1)
+
+if requirements.get("type") != "array":
+    raise SystemExit(1)
+
+if items.get("type") != "object":
+    raise SystemExit(1)
+
+item_properties = items.get("properties", {})
+required = set(items.get("required", []))
+expected_item_fields = {"req_id", "description", "rating", "evidence", "language", "shell_checklist"}
+if not expected_item_fields.issubset(item_properties) or not {"req_id", "description", "rating", "evidence"}.issubset(required):
+    raise SystemExit(1)
+
+if summary.get("type") != "object":
+    raise SystemExit(1)
+
+summary_properties = summary.get("properties", {})
+if not {"implemented", "partial", "shell", "missing"}.issubset(summary_properties):
+    raise SystemExit(1)
+
+raise SystemExit(0)
+PY
+}
+
+gate3_schema_flag_supported() {
+  local schema_file="$1"
+  gate3_schema_matches_prompt_contract "$schema_file"
+}
+
 process_command() {
   local pid="$1"
   [[ -n "$pid" ]] || return 0
@@ -260,6 +307,9 @@ For EACH requirement in the specification:
    - SHELL: File exists but contains placeholder/minimal code
    - MISSING: No corresponding code found
 
+For broad branch-level requirements, use representative evidence instead of exhaustively reading every modified file.
+Read every file you cite as evidence, but do not attempt a full branch review unless the requirement itself demands it.
+
 === SHELL DETECTION (Language-Agnostic) ===
 The goal is to detect placeholder/stub code that looks complete but does nothing real.
 Apply the checks relevant to the file's language:
@@ -268,12 +318,14 @@ $SHELL_CHECKLIST
 === END SHELL DETECTION ===
 
 CRITICAL RULES:
-- You MUST use the Read tool on EVERY file you assess
+- You MUST use the Read tool on EVERY file you cite as evidence
 - A false IMPLEMENTED rating is WORSE than a false SHELL rating
 - When in doubt, rate LOWER (PARTIAL or SHELL)
 - 'File exists and imports look right' is NOT evidence of IMPLEMENTED
 - Read the function BODIES, not just the signatures
 - Apply shell detection rules for the file's language (see above)
+- Do not narrate your process in the final response
+- After writing the JSON file, print the same JSON object to stdout and nothing else
 
 Write your assessment as JSON to: $WORK_REVIEW_FILE
 
@@ -322,16 +374,23 @@ echo "Modified files: $FILE_COUNT → max-turns: $COMPUTED_TURNS, timeout: ${COM
 run_direct_cli_once() {
   local engine="$1"
   local model="$2"
+  local use_schema=0
 
   # Gate 3 structured-output enforcement. When GATE3_SCHEMA_FILE is set,
   # we pass it to the engine's native schema flag (engine-boundary
   # enforcement, not parse-time patching). If unset, fall back to
   # free-form output (legacy behavior).
+  if gate3_schema_flag_supported "$GATE3_SCHEMA_FILE"; then
+    use_schema=1
+  elif [[ -n "$GATE3_SCHEMA_FILE" && -f "$GATE3_SCHEMA_FILE" ]]; then
+    echo "WARN: Gate 3 schema does not match the current verifier prompt contract; skipping native schema enforcement." >&2
+  fi
+
   case "$engine" in
     claude)
       if command -v claude >/dev/null 2>&1; then
         local CLAUDE_ARGS=(--print)
-        if [[ -n "$GATE3_SCHEMA_FILE" && -f "$GATE3_SCHEMA_FILE" ]]; then
+        if [[ $use_schema -eq 1 ]]; then
           CLAUDE_ARGS+=(--output-format json --json-schema "$(cat "$GATE3_SCHEMA_FILE")")
         fi
         echo "$VERIFIER_PROMPT" | claude "${CLAUDE_ARGS[@]}" 2>&1 | tee "$CLI_OUTPUT_FILE"
@@ -346,7 +405,7 @@ run_direct_cli_once() {
         if [[ -n "$model" ]]; then
           CODEX_ARGS+=(-m "$model")
         fi
-        if [[ -n "$GATE3_SCHEMA_FILE" && -f "$GATE3_SCHEMA_FILE" ]]; then
+        if [[ $use_schema -eq 1 ]]; then
           CODEX_ARGS+=(--output-schema "$GATE3_SCHEMA_FILE")
         fi
         codex "${CODEX_ARGS[@]}" "$VERIFIER_PROMPT" 2>&1 | tee "$CLI_OUTPUT_FILE"
@@ -473,15 +532,48 @@ review_file_is_valid() {
   python3 - "$candidate" <<'PY'
 import json, sys
 from pathlib import Path
+
+ALLOWED_RATINGS = {"IMPLEMENTED", "PARTIAL", "SHELL", "MISSING"}
+
+def is_real_payload(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+
+    requirements = payload.get("requirements")
+    summary = payload.get("summary")
+    if not isinstance(requirements, list) or not isinstance(summary, dict):
+        return False
+
+    if not requirements:
+        return False
+
+    for key in ("implemented", "partial", "shell", "missing"):
+        value = summary.get(key)
+        if not isinstance(value, int) or value < 0:
+            return False
+
+    for requirement in requirements:
+        if not isinstance(requirement, dict):
+            return False
+        if not isinstance(requirement.get("req_id"), str) or not requirement["req_id"].startswith("R"):
+            return False
+        if requirement.get("description") in (None, "", "..."):
+            return False
+        if requirement.get("rating") not in ALLOWED_RATINGS:
+            return False
+        evidence = requirement.get("evidence")
+        if not isinstance(evidence, str) or evidence.strip() == "":
+            return False
+        if "Specific file:line references and what you found" in evidence:
+            return False
+
+    return True
+
 path = Path(sys.argv[1])
 if not path.is_file():
     raise SystemExit(1)
 payload = json.loads(path.read_text())
-if not isinstance(payload, dict):
-    raise SystemExit(1)
-requirements = payload.get("requirements")
-summary = payload.get("summary")
-if not isinstance(requirements, list) or not isinstance(summary, dict):
+if not is_real_payload(payload):
     raise SystemExit(1)
 raise SystemExit(0)
 PY
@@ -502,6 +594,43 @@ if not source.is_file():
 
 text = source.read_text(errors="ignore")
 decoder = JSONDecoder()
+best_payload = None
+
+def is_real_payload(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+
+    requirements = payload.get("requirements")
+    summary = payload.get("summary")
+    if not isinstance(requirements, list) or not isinstance(summary, dict):
+        return False
+
+    if not requirements:
+        return False
+
+    for key in ("implemented", "partial", "shell", "missing"):
+        value = summary.get(key)
+        if not isinstance(value, int) or value < 0:
+            return False
+
+    for requirement in requirements:
+        if not isinstance(requirement, dict):
+            return False
+        req_id = requirement.get("req_id")
+        if not isinstance(req_id, str) or not req_id.startswith("R"):
+            return False
+        if requirement.get("description") in (None, "", "..."):
+            return False
+        if requirement.get("rating") not in {"IMPLEMENTED", "PARTIAL", "SHELL", "MISSING"}:
+            return False
+        evidence = requirement.get("evidence")
+        if not isinstance(evidence, str) or evidence.strip() == "":
+            return False
+        if "Specific file:line references and what you found" in evidence:
+            return False
+
+    return True
+
 for index, char in enumerate(text):
     if char != "{":
         continue
@@ -509,11 +638,14 @@ for index, char in enumerate(text):
         payload, _ = decoder.raw_decode(text[index:])
     except json.JSONDecodeError:
         continue
-    if isinstance(payload, dict) and isinstance(payload.get("requirements"), list) and isinstance(payload.get("summary"), dict):
-        target.write_text(json.dumps(payload, indent=2) + "\n")
-        raise SystemExit(0)
+    if is_real_payload(payload):
+        best_payload = payload
 
-raise SystemExit(1)
+if best_payload is None:
+    raise SystemExit(1)
+
+target.write_text(json.dumps(best_payload, indent=2) + "\n")
+raise SystemExit(0)
 PY
 }
 

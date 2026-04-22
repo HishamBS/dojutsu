@@ -1,34 +1,91 @@
 {
-  "project_types": {
+  "languages": {
     "typescript": {
       "extensions": [".ts", ".tsx", ".js", ".jsx"],
-      "type_check": "npx tsc --noEmit",
-      "lint": "npx eslint . --ext .ts,.tsx",
-      "test": "npx jest --passWithNoTests"
+      "typecheck": {
+        "npm_scripts": ["typecheck", "type-check", "tsc", "check:types", "check-types"]
+      },
+      "lint": {
+        "npm_scripts": ["lint", "eslint", "check:lint", "lint:check"],
+        "fallback": {
+          "cmd": "npx eslint . --ext .ts,.tsx"
+        }
+      },
+      "test": {
+        "npm_scripts": ["test"]
+      }
     },
     "python": {
       "extensions": [".py"],
-      "type_check": "python3 -m mypy .",
-      "lint": "python3 -m ruff check .",
-      "test": "python3 -m pytest -q"
+      "typecheck": {
+        "commands": [
+          { "cmd": "python3 -m mypy .", "requires": "mypy" }
+        ]
+      },
+      "lint": {
+        "commands": [
+          { "cmd": "python3 -m ruff check .", "requires": "ruff" }
+        ]
+      },
+      "test": {
+        "commands": [
+          { "cmd": "python3 -m pytest -q", "requires": "pytest" }
+        ]
+      }
     },
     "java": {
       "extensions": [".java", ".kt"],
-      "type_check": "mvn compile -q",
-      "lint": "mvn checkstyle:check -q",
-      "test": "mvn test -q"
+      "typecheck": {
+        "commands": [
+          { "cmd": "mvn compile -q", "executable": "./mvnw", "requires": "mvn" }
+        ]
+      },
+      "lint": {
+        "commands": [
+          { "cmd": "mvn checkstyle:check -q", "requires": "mvn" }
+        ]
+      },
+      "test": {
+        "commands": [
+          { "cmd": "mvn test -q", "requires": "mvn" }
+        ]
+      }
     },
     "go": {
       "extensions": [".go"],
-      "type_check": "go build ./...",
-      "lint": "golangci-lint run",
-      "test": "go test ./..."
+      "typecheck": {
+        "commands": [
+          { "cmd": "go build ./...", "requires": "go" }
+        ]
+      },
+      "lint": {
+        "commands": [
+          { "cmd": "golangci-lint run", "requires": "golangci-lint" }
+        ]
+      },
+      "test": {
+        "commands": [
+          { "cmd": "go test ./...", "requires": "go" }
+        ]
+      }
     },
     "rust": {
       "extensions": [".rs"],
-      "type_check": "cargo check",
-      "lint": "cargo clippy",
-      "test": "cargo test"
+      "typecheck": {
+        "commands": [
+          { "cmd": "cargo check", "requires": "cargo" }
+        ]
+      },
+      "lint": {
+        "commands": [
+          { "cmd": "cargo clippy -- -D warnings", "requires": "cargo" }
+        ]
+      },
+      "test": {
+        "commands": [
+          { "cmd": "cargo test", "requires": "cargo" }
+        ]
+      }
     }
   }
 }

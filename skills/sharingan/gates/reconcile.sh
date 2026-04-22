@@ -53,6 +53,22 @@ runtime_file = os.environ.get('RUNTIME_FILE', '')
 verdict_file = os.environ.get('VERDICT_FILE', '')
 determ_exit = int(os.environ.get('DETERM_EXIT', '0'))
 sharingan_base = os.environ.get('SHARINGAN_BASE', 'HEAD~1')
+script_dir = os.environ.get('SCRIPT_DIR', '')
+
+# R34: Load verdict-policy.json from sharingan config; treat PARTIAL as blocking
+# if configured. Falls back to legacy shell/missing-only behavior if policy absent.
+policy_path = Path(script_dir).parent / 'config' / 'verdict-policy.json'
+blocking_verdicts = {'SHELL', 'MISSING'}
+if policy_path.exists():
+    try:
+        with open(policy_path) as pf:
+            policy = json.load(pf)
+        configured = policy.get('gate_3', {}).get('blocking_verdicts', [])
+        if isinstance(configured, list) and configured:
+            blocking_verdicts = set(configured)
+    except (json.JSONDecodeError, OSError):
+        pass
+partial_blocks = 'PARTIAL' in blocking_verdicts
 
 # Load evidence (builder claims)
 builder_claims = {}
@@ -128,13 +144,12 @@ for req_id in sorted(all_reqs):
     b_status = builder.get('status', 'NOT_CHECKED')
     v_rating = verifier.get('rating', 'NOT_CHECKED')
 
-    # Disagreement detection — per verdict-policy.json, only SHELL/MISSING are
-    # blocking disagreements. PARTIAL surfaces as advisory (see advisories list
-    # below). This breaks the LLM-rescope loop where the verifier invents new
-    # PARTIAL nits each run, because PARTIAL no longer triggers fix cycles.
-    if b_status == 'VERIFIED' and v_rating in ('SHELL', 'MISSING'):
+    # Disagreement detection driven by verdict-policy.json::gate_3.blocking_verdicts.
+    # R34: PARTIAL blocks CLEAR (policy v2). Legacy advisory fallback kept for
+    # machines that haven't regenerated policy yet (partial_blocks=False).
+    if b_status == 'VERIFIED' and v_rating in blocking_verdicts:
         issues.append(f"{req_id}: Builder=VERIFIED but Verifier={v_rating} — {verifier.get('evidence', 'no evidence')}")
-    elif b_status == 'VERIFIED' and v_rating == 'PARTIAL':
+    elif b_status == 'VERIFIED' and v_rating == 'PARTIAL' and not partial_blocks:
         advisories.append(f"{req_id}: Builder=VERIFIED but Verifier=PARTIAL (advisory; not blocking) — {verifier.get('evidence', 'no evidence')}")
 
 # Check for blocking conditions
@@ -154,10 +169,17 @@ if not verifier_completed:
 
 shell_count = verifier_summary.get('shell', 0)
 missing_count = verifier_summary.get('missing', 0)
+partial_count = verifier_summary.get('partial', 0)
 if shell_count > 0 or missing_count > 0:
     blocked = True
     blocked_at = blocked_at or "gate_3"
     remaining.append(f"Verifier found {shell_count} shells, {missing_count} missing")
+
+# R34: PARTIAL blocks CLEAR when configured in blocking_verdicts.
+if partial_blocks and partial_count > 0:
+    blocked = True
+    blocked_at = blocked_at or "gate_3"
+    remaining.append(f"Verifier found {partial_count} PARTIAL (R34: PARTIAL blocks CLEAR)")
 
 if missing_verifier_ids:
     blocked = True
@@ -238,7 +260,11 @@ else:
                 "requirements_expected": len(expected_verifier_ids),
                 "requirements_rated": len(verifier_ratings),
                 "requirements_missing": len(missing_verifier_ids),
-                "partial_advisory_count": sum(1 for a in advisories if 'PARTIAL' in a),
+                # R34: honest count of PARTIAL verdicts from Gate 3 summary,
+                # not the hardcoded-0 that v3-era reconcile used to emit.
+                "partial_count": partial_count,
+                "partial_advisory_count": 0 if partial_blocks else partial_count,
+                "partial_blocks_clear": partial_blocks,
             },
             "gate_4": {
                 "status": "PASS" if not runtime_file or runtime_failures == 0 else "FAIL",
