@@ -37,6 +37,12 @@ load_capability_value() {
 }
 
 # ── Read engine+model from SSOT (NEVER hardcode — matches SPSM pipeline pattern) ──
+# Vanguard SSOT for Gate 3 verifier model: coding-agent/.coding-agent/vanguard-models.yaml
+#   sharingan_gate3.primary: {engine: codex, model: gpt-5.5}
+# When the SHARINGAN_VERIFIER_MODEL env var is unset and agent-capabilities.yaml has an empty
+# model for SharinganVerifier, the codex CLI defaults to its latest available model.
+# To pin gpt-5.5 explicitly, set: SHARINGAN_VERIFIER_MODEL=gpt-5.5 before invoking this script,
+# or populate ~/.config/spsm/policy/agent-capabilities.yaml::agents.SharinganVerifier.model.
 AGENT_CAPS="${HOME}/.config/spsm/policy/agent-capabilities.yaml"
 SSOT_ENGINE=""
 SSOT_MODEL=""
@@ -208,6 +214,7 @@ TRANSPORT="${SHARINGAN_VERIFY_TRANSPORT:-direct}"
 CLI_ENGINE_SET=0
 CLI_MODEL_SET=0
 ENGINE_SOURCE="auto"
+CALLER=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -216,9 +223,46 @@ while [[ $# -gt 0 ]]; do
     --engine) ENGINE="$2"; CLI_ENGINE_SET=1; shift 2 ;;
     --model) MODEL="$2"; CLI_MODEL_SET=1; shift 2 ;;
     --transport) TRANSPORT="$2"; shift 2 ;;
+    --caller) CALLER="$2"; shift 2 ;;
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
+
+# ── Caller-engine detection (B1/B2 doctrine in SKILL.md) ──
+# The TRANSPORT default of "direct" lets explicit transports still win, but if
+# the operator left transport at default, fall back to caller-engine routing:
+#   claude → direct CLI through codex plugin (codex-review-diff wrapper)
+#   codex  → agent-mux (only way for codex to dispatch a Claude verifier)
+#   gemini → agent-mux (same model as codex)
+# Refuse to guess when caller is indeterminate AND transport was not explicit.
+if [[ -z "$CALLER" ]]; then
+  if [[ -n "${CLAUDE_CODE_VERSION:-}" ]]; then
+    CALLER="claude"
+  elif [[ -n "${CODEX_HOME:-}" ]]; then
+    CALLER="codex"
+  elif [[ -n "${GEMINI_API_KEY:-}" ]]; then
+    CALLER="gemini"
+  fi
+fi
+
+# If transport is at default ("direct") and caller is codex/gemini, switch to mux.
+# Claude caller stays on direct (codex-review-diff wrapper, not agent-mux).
+if [[ "$TRANSPORT" == "direct" && -z "${SHARINGAN_VERIFY_TRANSPORT:-}" ]]; then
+  case "$CALLER" in
+    codex|gemini) TRANSPORT="mux" ;;
+    claude|"")    : ;;  # claude → direct stays; "" → handled by refusal below
+  esac
+fi
+
+# Refuse to dispatch when caller is indeterminate AND no explicit transport.
+# Prevents the silent Claude → agent-mux misroute the previous logic produced.
+if [[ -z "$CALLER" && -z "${SHARINGAN_VERIFY_TRANSPORT:-}" ]]; then
+  echo "ERROR: caller engine indeterminate — pass --caller {claude|codex|gemini}" >&2
+  echo "       or set SHARINGAN_VERIFY_TRANSPORT={auto|mux|direct} explicitly," >&2
+  echo "       or export the harness signal env var (CLAUDE_CODE_VERSION /" >&2
+  echo "       CODEX_HOME / GEMINI_API_KEY)." >&2
+  exit 2
+fi
 
 case "$TRANSPORT" in
   auto|mux|direct) ;;
@@ -766,11 +810,22 @@ poll_mux_result() {
   return 1
 }
 
-# ── Dispatch via agent-mux if available ──
+# ── Dispatch routing (caller-engine driven, see SKILL.md Invocation Directionality) ──
+#   transport=direct → run_direct_cli (claude-side: codex-review-diff wrapper)
+#   transport=mux    → agent-mux (codex/gemini-side bridge to Claude)
+#   transport=auto   → keep historical behaviour (mux if available, else direct)
+# Caller-engine detection above already maps codex/gemini → mux when transport
+# was at default. transport=direct in a Codex session is now an explicit
+# operator override, not the default.
 if [[ "$TRANSPORT" == "direct" ]]; then
   run_direct_cli
-elif command -v agent-mux >/dev/null 2>&1; then
-  echo "Dispatching via agent-mux..."
+elif [[ "$TRANSPORT" == "mux" ]]; then
+  if ! command -v agent-mux >/dev/null 2>&1; then
+    echo "ERROR: transport=mux requested but agent-mux not on PATH" >&2
+    echo "       caller=$CALLER — agent-mux is the only Codex/Gemini→Claude bridge" >&2
+    exit 1
+  fi
+  echo "Dispatching via agent-mux (caller=$CALLER)..."
   MUX_ARGS=(--stream --engine "$ENGINE" --effort high --cwd "$(pwd)" --max-turns "$COMPUTED_TURNS" --timeout "$COMPUTED_TIMEOUT_SEC" --async)
   if [[ -n "$MODEL" ]]; then
     MUX_ARGS+=(--model "$MODEL")
@@ -790,19 +845,58 @@ elif command -v agent-mux >/dev/null 2>&1; then
   fi
 
   if [[ "$MUX_STATUS" != "completed" ]]; then
-    echo "WARN: agent-mux dispatch failed (status=$MUX_STATUS): $MUX_ERROR" >&2
+    echo "ERROR: agent-mux dispatch failed (status=$MUX_STATUS): $MUX_ERROR" >&2
     abort_mux_dispatch "$MUX_DISPATCH_ID"
-    run_direct_cli
-  elif ! review_file_is_valid "$WORK_REVIEW_FILE" && ! mux_artifact_has_review_output "$MUX_ARTIFACT_DIR"; then
-    echo "WARN: agent-mux completed without producing verifier artifacts; falling back to direct CLI" >&2
+    exit 1
+  fi
+  if ! review_file_is_valid "$WORK_REVIEW_FILE" && ! mux_artifact_has_review_output "$MUX_ARTIFACT_DIR"; then
+    echo "ERROR: agent-mux completed without producing verifier artifacts" >&2
     abort_mux_dispatch "$MUX_DISPATCH_ID"
-    run_direct_cli
-  elif [[ $MUX_EXIT -ne 0 ]]; then
+    exit 1
+  fi
+  if [[ $MUX_EXIT -ne 0 ]]; then
     echo "WARN: agent-mux exited with $MUX_EXIT" >&2
   fi
+elif [[ "$TRANSPORT" == "auto" ]]; then
+  # Legacy auto path — explicit opt-in only via --transport auto.
+  if command -v agent-mux >/dev/null 2>&1; then
+    echo "Dispatching via agent-mux (transport=auto)..."
+    MUX_ARGS=(--stream --engine "$ENGINE" --effort high --cwd "$(pwd)" --max-turns "$COMPUTED_TURNS" --timeout "$COMPUTED_TIMEOUT_SEC" --async)
+    if [[ -n "$MODEL" ]]; then
+      MUX_ARGS+=(--model "$MODEL")
+    fi
+    MUX_START=$(agent-mux "${MUX_ARGS[@]}" "$VERIFIER_PROMPT" 2>/dev/null)
+    MUX_EXIT=$?
+    MUX_DISPATCH_ID=$(echo "$MUX_START" | jq -r '.dispatch_id // ""' 2>/dev/null)
+    MUX_ARTIFACT_DIR=$(echo "$MUX_START" | jq -r '.artifact_dir // .dispatch_spec.artifact_dir // .control.artifact_dir // ""' 2>/dev/null)
+
+    if [[ -z "$MUX_DISPATCH_ID" ]]; then
+      MUX_STATUS="failed"
+      MUX_ERROR=$(echo "$MUX_START" | jq -r '.error.message // .error // "missing dispatch_id"' 2>/dev/null)
+    else
+      MUX_RESULT=$(poll_mux_result "$MUX_DISPATCH_ID" "$MUX_ARTIFACT_DIR" || echo "")
+      MUX_STATUS=$(echo "$MUX_RESULT" | jq -r '.status // .record.status // .meta.status // "failed"' 2>/dev/null)
+      MUX_ERROR=$(echo "$MUX_RESULT" | jq -r '.error.message // .error // "unknown error"' 2>/dev/null)
+    fi
+
+    if [[ "$MUX_STATUS" != "completed" ]]; then
+      echo "WARN: agent-mux dispatch failed (status=$MUX_STATUS): $MUX_ERROR" >&2
+      abort_mux_dispatch "$MUX_DISPATCH_ID"
+      run_direct_cli
+    elif ! review_file_is_valid "$WORK_REVIEW_FILE" && ! mux_artifact_has_review_output "$MUX_ARTIFACT_DIR"; then
+      echo "WARN: agent-mux completed without producing verifier artifacts; falling back to direct CLI" >&2
+      abort_mux_dispatch "$MUX_DISPATCH_ID"
+      run_direct_cli
+    elif [[ $MUX_EXIT -ne 0 ]]; then
+      echo "WARN: agent-mux exited with $MUX_EXIT" >&2
+    fi
+  else
+    echo "agent-mux not found (transport=auto)."
+    run_direct_cli
+  fi
 else
-  echo "agent-mux not found."
-  run_direct_cli
+  echo "ERROR: unknown TRANSPORT '$TRANSPORT' — expected direct|mux|auto" >&2
+  exit 1
 fi
 
 if ! finalize_review_file "$ENGINE" "${MODEL:-unknown}"; then

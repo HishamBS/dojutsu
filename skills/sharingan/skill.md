@@ -9,6 +9,50 @@ description: Use after implementing any batch of code changes, before claiming c
 
 **"Don't trust; require proof."** Every claim must be backed by a deterministic artifact or independent verification. LLM self-reports are NOT evidence.
 
+## Invocation Directionality
+
+Sharingan can be invoked from any coding-agent harness. Gate 3 (independent verifier) needs to run on the **other engine** than the caller — that is the entire point of fresh-context independent review. Routing depends on **who is calling**, not on what binaries happen to be on `$PATH`. Do not let the gate auto-pick a transport based on availability; that produced a Claude → agent-mux silent dispatch where it should have been Claude → codex plugin.
+
+### Claude Code → Sharingan
+Claude Code has the Codex plugin installed at `~/.claude/plugins/marketplaces/openai-codex/plugins/codex/`. Gate 3 dispatches **directly through the plugin**, via the local wrapper:
+```bash
+~/dotfiles/bin/bin/codex-review-diff \
+  --range "$SHARINGAN_BASE..HEAD" \
+  --task-id sharingan-gate-3
+```
+The wrapper calls `codex-companion.mjs adversarial-review` underneath. **Do not** route through agent-mux from a Claude Code session — agent-mux is the Codex-side bridge to Claude, not the Claude-side bridge to anything.
+
+Detection signal: `$CLAUDE_CODE_VERSION` is set (Claude Code exports it on every session start), or `verify-independent.sh` was invoked with `--caller claude`.
+
+### Codex CLI → Sharingan
+Codex CLI has no Claude plugin. The only way Codex can dispatch a Claude-side verifier is **agent-mux**:
+```bash
+agent-mux \
+  --engine claude --model claude-sonnet-4-6 --effort high \
+  --cwd "$(pwd)" \
+  --max-turns "$COMPUTED_TURNS" --timeout "$COMPUTED_TIMEOUT_SEC" \
+  --async "$VERIFIER_PROMPT"
+```
+Capture the returned `dispatch_id` and poll via `agent-mux result <dispatch_id> --json` until `status == "completed"`. Verifier artifacts land under the `artifact_dir` reported in the dispatch start envelope. agent-mux IS the supported Codex→Claude bridge; do not attempt to invoke `claude` CLI directly from a Codex session.
+
+Detection signal: `$CODEX_HOME` is set (Codex CLI exports it), or `verify-independent.sh` was invoked with `--caller codex`.
+
+### Gemini CLI → Sharingan
+Same model as Codex. agent-mux is the bridge to Claude (Gemini CLI has no Claude plugin):
+```bash
+agent-mux --engine claude --model claude-sonnet-4-6 --effort high \
+  --cwd "$(pwd)" --async "$VERIFIER_PROMPT"
+```
+
+Detection signal: `$GEMINI_API_KEY` set with no `$CLAUDE_CODE_VERSION` / `$CODEX_HOME`, or `--caller gemini`.
+
+### Direct CLI fallback (refusal)
+If none of the caller-engine env signals are present and no `--caller` flag was passed, `verify-independent.sh` MUST refuse to dispatch. Do not guess. Print:
+```
+ERROR: caller engine indeterminate — pass --caller {claude|codex|gemini} or set $CLAUDE_CODE_VERSION / $CODEX_HOME / $GEMINI_API_KEY
+```
+The previous behavior of auto-preferring agent-mux when present produced silent cross-engine misroutes; the refusal stance prevents that.
+
 ## Setup
 
 ```bash
