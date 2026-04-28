@@ -261,6 +261,76 @@ else
   echo "  PASS"
 fi
 
+# ══════════════════════════════════════════════════════════════
+# Check 7: R18 — AI attribution in commit history (all projects)
+#
+# Split into two sub-scans to avoid self-flagging on doctrine files:
+#   7a: commit messages only (no patch content) — no path carve-outs needed
+#   7b: patch diff content — excludes files that legitimately contain the
+#       patterns by definition (rule config, Gate 0 itself, R18 tests, doctrine)
+# ══════════════════════════════════════════════════════════════
+echo "Gate 0 [7/7]: Scanning commit history for AI attribution (R18)..."
+R18_LINES=0
+> "$EVIDENCE_DIR/r18-attribution.log"
+
+# Patterns matching rule-grep-defaults.json R18 history-scope rules
+R18_PATTERNS=(
+  "(?i)co-authored-by:.*(claude|codex|gemini|opus|sonnet|haiku)"
+  "(?i)generated (by|with) [\\[\\(]?(ai|claude|codex|gemini)"
+  "(?i)ai-(generated|written|authored)"
+  "🤖"
+)
+
+# 7a — commit messages only (no -p, no patch): catches attribution in messages
+# with no carve-outs — messages never legitimately contain these strings.
+MSG_OUTPUT=$(git log --format="%B" "${SHARINGAN_BASE}..HEAD" 2>/dev/null || true)
+if [[ -n "$MSG_OUTPUT" ]]; then
+  for pat in "${R18_PATTERNS[@]}"; do
+    if echo "$MSG_OUTPUT" | rg -P "$pat" --no-heading 2>/dev/null \
+        | sed 's/^/[msg] /' >> "$EVIDENCE_DIR/r18-attribution.log"; then
+      true
+    fi
+  done
+fi
+
+# 7b — patch diff content only, excluding files that define or test R18 patterns.
+# These paths legitimately contain the trigger strings by construction:
+#   - rule-grep-defaults.json      (defines the patterns)
+#   - verify-deterministic.sh      (this file — implements the check)
+#   - B19_*.sh                     (smoke fixture that tests R18 enforcement)
+#   - test_rule_grep_r18_patterns.py (unit test for R18 pattern coverage)
+#   - CLAUDE.md / AGENTS.md / GEMINI.md / CODING_RULES.md (doctrine mirrors — any dir)
+#   (plan/audit docs are operational — not doctrine SSOTs — R18 applies to them)
+PATCH_OUTPUT=$(git log -p --format= "${SHARINGAN_BASE}..HEAD" \
+  -- \
+  ':!scripts/rule-grep-defaults.json' \
+  ':!spsm/.config/spsm/skills/sharingan/gates/verify-deterministic.sh' \
+  ':!test/vanguard/smoke/B19_*.sh' \
+  ':!test/vanguard/test_rule_grep_r18_patterns.py' \
+  ':!**/CLAUDE.md' \
+  ':!**/AGENTS.md' \
+  ':!**/GEMINI.md' \
+  ':!**/CODING_RULES.md' \
+  ':!**/.cursorrules' \
+  2>/dev/null || true)
+if [[ -n "$PATCH_OUTPUT" ]]; then
+  for pat in "${R18_PATTERNS[@]}"; do
+    if echo "$PATCH_OUTPUT" | rg -P "$pat" --no-heading 2>/dev/null \
+        | sed 's/^/[patch] /' >> "$EVIDENCE_DIR/r18-attribution.log"; then
+      true
+    fi
+  done
+fi
+
+R18_LINES=$(wc -l < "$EVIDENCE_DIR/r18-attribution.log" | tr -d ' ')
+if [[ $R18_LINES -gt 0 ]]; then
+  echo "  FAIL: AI attribution detected in commit history (R18 violation)"
+  head -5 "$EVIDENCE_DIR/r18-attribution.log" | while IFS= read -r line; do echo "    $line"; done
+  FAILURES=$((FAILURES + 1))
+else
+  echo "  PASS"
+fi
+
 # ── Write results ──
 cat > "$EVIDENCE_DIR/deterministic-results.json" << ENDJSON
 {
@@ -274,7 +344,8 @@ cat > "$EVIDENCE_DIR/deterministic-results.json" << ENDJSON
     "stubs": { "count": $STUBS_FOUND, "log": "stubs.log" },
     "unsafe_types": { "count": $ANY_FOUND, "log": "any-types.log" },
     "component_returns": { "warnings": $JSX_WARNINGS, "log": "jsx-check.log" },
-    "empty_functions": { "count": $EMPTY_FOUND, "log": "empty-functions.log" }
+    "empty_functions": { "count": $EMPTY_FOUND, "log": "empty-functions.log" },
+    "r18_attribution": { "count": $R18_LINES, "log": "r18-attribution.log" }
   },
   "hard_failures": $FAILURES,
   "verdict": "$([ $FAILURES -eq 0 ] && echo 'PASS' || echo 'FAIL')"
