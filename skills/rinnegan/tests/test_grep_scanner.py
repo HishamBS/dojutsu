@@ -313,3 +313,270 @@ class TestExistingPatternsStillWork:
         findings = _run_pipeline(project_dir, audit_dir)
         test_findings = [f for f in findings if "__tests__" in f["file"]]
         assert len(test_findings) == 0
+
+
+def test_meta_file_requires_directory_filename_and_content(tmp_path):
+    from grep_scanner_lib import _is_meta_file
+
+    # Positive: all three signals
+    f1 = tmp_path / "scripts" / "ci" / "enforce-engineering-rules.ts"
+    f1.parent.mkdir(parents=True)
+    f1.write_text("const RULE_PATTERNS = [];\nconst SUPPRESSION = /@ts-nocheck/;\n")
+    assert _is_meta_file("scripts/ci/enforce-engineering-rules.ts", str(tmp_path)) is True
+
+    # Negative: production file with matching FILENAME but wrong directory
+    f2 = tmp_path / "packages" / "auth" / "src" / "verify-token.ts"
+    f2.parent.mkdir(parents=True)
+    f2.write_text("export function verifyToken(t: string) { return t.length > 0; }\n")
+    assert _is_meta_file("packages/auth/src/verify-token.ts", str(tmp_path)) is False
+
+    # Negative: file in scripts/ci/ but no PatternDef marker
+    f3 = tmp_path / "scripts" / "ci" / "release-publish.ts"
+    f3.parent.mkdir(parents=True, exist_ok=True)
+    f3.write_text("import { execSync } from 'node:child_process';\n")
+    assert _is_meta_file("scripts/ci/release-publish.ts", str(tmp_path)) is False
+
+    # Negative: regular source file
+    f4 = tmp_path / "packages" / "h1" / "src" / "cam" / "engine.ts"
+    f4.parent.mkdir(parents=True)
+    f4.write_text("export class Engine {}\n")
+    assert _is_meta_file("packages/h1/src/cam/engine.ts", str(tmp_path)) is False
+
+
+def test_grep_scan_skips_R09_R13_R14_only_on_meta_files(tmp_path):
+    from grep_scanner_lib import scan_project
+
+    meta = tmp_path / "scripts" / "ci" / "enforce-engineering-rules.ts"
+    meta.parent.mkdir(parents=True)
+    meta.write_text(
+        "const RULE_PATTERNS = [];\n"
+        "const SUPPRESSION = /@ts-nocheck|eslint-disable/;\n"
+    )
+
+    prod = tmp_path / "packages" / "auth" / "src" / "verify-token.ts"
+    prod.parent.mkdir(parents=True)
+    prod.write_text("// @ts-nocheck\nexport const x: any = 1;\n")
+
+    findings, _counts = scan_project(
+        project_dir=str(tmp_path),
+        source_files=[
+            "scripts/ci/enforce-engineering-rules.ts",
+            "packages/auth/src/verify-token.ts",
+        ],
+        stack="typescript",
+        file_to_layer={
+            "scripts/ci/enforce-engineering-rules.ts": "config",
+            "packages/auth/src/verify-token.ts": "services",
+        },
+    )
+
+    by_file: dict[str, set[str]] = {}
+    for f in findings:
+        by_file.setdefault(f["file"], set()).add(f["rule"])
+
+    meta_rules = by_file.get("scripts/ci/enforce-engineering-rules.ts", set())
+    assert "R09" not in meta_rules
+    assert "R13" not in meta_rules
+    assert "R14" not in meta_rules
+
+    prod_rules = by_file.get("packages/auth/src/verify-token.ts", set())
+    assert "R14" in prod_rules
+
+
+# ---- Task 4: skip_string_literals flag tests --------------------------------
+
+
+def test_pattern_def_supports_skip_string_literals():
+    from grep_scanner_lib import PatternDef
+    p = PatternDef(
+        rule="R14",
+        severity="CRITICAL",
+        category="build",
+        pattern=r"@ts-nocheck",
+        description="...",
+        explanation="...",
+        skip_string_literals=True,
+    )
+    assert p.get("skip_string_literals") is True
+
+
+def test_ts_nocheck_inside_regex_literal_is_not_flagged(tmp_path):
+    from grep_scanner_lib import scan_project
+    f = tmp_path / "src" / "rule-detector.ts"
+    f.parent.mkdir(parents=True)
+    f.write_text(
+        'const SUPPRESSION_PATTERN = /@ts-nocheck|eslint-disable/;\n'
+        'export function isOk(): boolean { return true; }\n'
+    )
+    findings, _ = scan_project(
+        project_dir=str(tmp_path),
+        source_files=["src/rule-detector.ts"],
+        stack="typescript",
+        file_to_layer={"src/rule-detector.ts": "services"},
+    )
+    rules = {f["rule"] for f in findings}
+    assert "R14" not in rules
+
+
+def test_ts_nocheck_inside_string_literal_is_not_flagged(tmp_path):
+    from grep_scanner_lib import scan_project
+    f = tmp_path / "src" / "doc.ts"
+    f.parent.mkdir(parents=True)
+    f.write_text(
+        'export const docMessage = "use @ts-nocheck for tricky generated files";\n'
+    )
+    findings, _ = scan_project(
+        project_dir=str(tmp_path),
+        source_files=["src/doc.ts"],
+        stack="typescript",
+        file_to_layer={"src/doc.ts": "services"},
+    )
+    rules = {f["rule"] for f in findings}
+    assert "R14" not in rules
+
+
+def test_ts_nocheck_as_actual_directive_is_flagged(tmp_path):
+    from grep_scanner_lib import scan_project
+    f = tmp_path / "src" / "broken.ts"
+    f.parent.mkdir(parents=True)
+    f.write_text("// @ts-nocheck\nexport const x: any = 1;\n")
+    findings, _ = scan_project(
+        project_dir=str(tmp_path),
+        source_files=["src/broken.ts"],
+        stack="typescript",
+        file_to_layer={"src/broken.ts": "services"},
+    )
+    rules = {f["rule"] for f in findings}
+    assert "R14" in rules
+
+
+@pytest.mark.xfail(reason="known limitation: per-line stripping does not handle multi-line template literals")
+def test_ts_nocheck_inside_multiline_template_is_not_flagged(tmp_path):
+    from grep_scanner_lib import scan_project
+    f = tmp_path / "src" / "doc.ts"
+    f.parent.mkdir(parents=True)
+    f.write_text(
+        "export const tutorial = `\n"
+        "Use @ts-nocheck for tricky generated files\n"
+        "`;\n"
+    )
+    findings, _ = scan_project(
+        project_dir=str(tmp_path),
+        source_files=["src/doc.ts"],
+        stack="typescript",
+        file_to_layer={"src/doc.ts": "services"},
+    )
+    rules = {f["rule"] for f in findings}
+    assert "R14" not in rules
+
+
+# ---- Task 6: literal R12/R13 grep patterns ----------------------------------
+
+
+def test_grep_catches_zero_repeat_40_placeholder(tmp_path):
+    from grep_scanner_lib import scan_project
+    f = tmp_path / "src" / "x.ts"
+    f.parent.mkdir(parents=True)
+    f.write_text("const fakeHash = '0'.repeat(40);\n")
+    findings, _ = scan_project(
+        project_dir=str(tmp_path),
+        source_files=["src/x.ts"],
+        stack="typescript",
+        file_to_layer={"src/x.ts": "services"},
+    )
+    assert any(r["rule"] == "R12" for r in findings)
+
+
+def test_grep_catches_zero_repeat_64_placeholder(tmp_path):
+    from grep_scanner_lib import scan_project
+    f = tmp_path / "src" / "x.ts"
+    f.parent.mkdir(parents=True)
+    f.write_text('const fakeSha = "0".repeat(64);\n')
+    findings, _ = scan_project(
+        project_dir=str(tmp_path),
+        source_files=["src/x.ts"],
+        stack="typescript",
+        file_to_layer={"src/x.ts": "services"},
+    )
+    assert any(r["rule"] == "R12" for r in findings)
+
+
+def test_grep_catches_localhost_in_non_test_file(tmp_path):
+    from grep_scanner_lib import scan_project
+    f = tmp_path / "src" / "client.ts"
+    f.parent.mkdir(parents=True)
+    f.write_text("const apiBase = 'http://localhost:8080/api';\n")
+    findings, _ = scan_project(
+        project_dir=str(tmp_path),
+        source_files=["src/client.ts"],
+        stack="typescript",
+        file_to_layer={"src/client.ts": "services"},
+    )
+    assert any(r["rule"] == "R12" for r in findings)
+
+
+def test_grep_skips_localhost_in_test_file(tmp_path):
+    from grep_scanner_lib import scan_project
+    f = tmp_path / "src" / "client.test.ts"
+    f.parent.mkdir(parents=True)
+    f.write_text("const apiBase = 'http://localhost:8080/api';\n")
+    findings, _ = scan_project(
+        project_dir=str(tmp_path),
+        source_files=["src/client.test.ts"],
+        stack="typescript",
+        file_to_layer={"src/client.test.ts": "tests"},
+    )
+    # No R12 finding with 'localhost' substring on the test file
+    assert not any(r["rule"] == "R12" and "localhost" in r["snippet"] for r in findings)
+
+
+def test_grep_catches_humain_sdk_package_literal(tmp_path):
+    from grep_scanner_lib import scan_project
+    f = tmp_path / "scripts" / "release.ts"
+    f.parent.mkdir(parents=True)
+    f.write_text("const tsPackage = '@humain/sdk';\n")
+    findings, _ = scan_project(
+        project_dir=str(tmp_path),
+        source_files=["scripts/release.ts"],
+        stack="typescript",
+        file_to_layer={"scripts/release.ts": "config"},
+    )
+    assert any(r["rule"] == "R13" for r in findings)
+
+
+def test_grep_catches_h1_routes_filename_literal(tmp_path):
+    from grep_scanner_lib import scan_project
+    f = tmp_path / "scripts" / "loader.ts"
+    f.parent.mkdir(parents=True)
+    f.write_text("const path = '.h1-routes.json';\n")
+    findings, _ = scan_project(
+        project_dir=str(tmp_path),
+        source_files=["scripts/loader.ts"],
+        stack="typescript",
+        file_to_layer={"scripts/loader.ts": "config"},
+    )
+    assert any(r["rule"] == "R13" for r in findings)
+
+
+def test_grep_skips_sdk_package_literal_in_meta_file(tmp_path):
+    """R13 SDK-package pattern must not fire on files classified as meta-files."""
+    from grep_scanner_lib import scan_project
+    # Construct a file that passes all three meta-file signals:
+    # 1. directory: scripts/ci/
+    # 2. filename:  enforce-engineering-rules.ts
+    # 3. content:   contains 'PatternDef'
+    ci_dir = tmp_path / "scripts" / "ci"
+    ci_dir.mkdir(parents=True)
+    meta_file = ci_dir / "enforce-engineering-rules.ts"
+    meta_file.write_text(
+        "// PatternDef\n"
+        "const pkg = '@humain/sdk';\n"
+    )
+    findings, _ = scan_project(
+        project_dir=str(tmp_path),
+        source_files=["scripts/ci/enforce-engineering-rules.ts"],
+        stack="typescript",
+        file_to_layer={"scripts/ci/enforce-engineering-rules.ts": "config"},
+    )
+    r13_findings = [r for r in findings if r["rule"] == "R13"]
+    assert not r13_findings

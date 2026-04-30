@@ -5,6 +5,7 @@ and pytest-cov can measure coverage.
 """
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
@@ -26,6 +27,8 @@ class PatternDef(TypedDict, total=False):
     confidence: str  # "high" | "medium" | "low"
     confidence_reason: str
     skip_import_lines: bool
+    skip_string_literals: bool
+    file_glob_excludes: tuple[str, ...]
 
 
 class Finding(TypedDict, total=False):
@@ -67,6 +70,84 @@ CATEGORY_PREFIX: dict[str, str] = {
     "build": "BLD",
 }
 
+# ---- Meta-file allowlist constants ------------------------------------------
+
+_META_FILE_DIRECTORY_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^scripts/ci/"),
+    re.compile(r"^scripts/ce/"),
+    re.compile(r"^scripts/audit/"),
+    re.compile(r"^scripts/lint/"),
+    re.compile(r"^scripts/policy/"),
+)
+
+_META_FILE_NAME_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"/enforce-[^/]+\.(ts|js|py|mjs)$"),
+    re.compile(r"/verify-[^/]+\.(ts|js|py|mjs)$"),
+    re.compile(r"-rule-[^/]+\.(ts|js|py|mjs)$"),
+)
+
+_META_FILE_CONTENT_MARKERS: tuple[str, ...] = (
+    "RULE_PATTERNS",
+    "PatternDef",
+    "RULE_DEFS",
+)
+
+_META_FILE_SKIP_RULES: frozenset[str] = frozenset({"R09", "R13", "R14"})
+
+_META_CONTENT_HEAD_LINES: int = 100
+
+
+def _is_meta_file(rel_path: str, project_dir: str) -> bool:
+    """Return True only if all three signals coincide.
+
+    Three signals required:
+      1. Directory: file lives under a known meta-file directory.
+      2. Filename: name starts with enforce-/verify- or contains -rule-.
+      3. Content: first 100 lines contain RULE_PATTERNS, PatternDef, or RULE_DEFS.
+
+    Production files matching directory + filename but lacking a meta-marker
+    (e.g., release-publish.ts in scripts/ci/) are NOT allowlisted.
+    """
+    if not any(p.search(rel_path) for p in _META_FILE_DIRECTORY_PATTERNS):
+        return False
+    if not any(p.search(rel_path) for p in _META_FILE_NAME_PATTERNS):
+        return False
+    abs_path = os.path.join(project_dir, rel_path)
+    try:
+        with open(abs_path, encoding="utf-8") as f:
+            head = "".join(f.readline() for _ in range(_META_CONTENT_HEAD_LINES))
+    except (OSError, UnicodeDecodeError):
+        return False
+    return any(marker in head for marker in _META_FILE_CONTENT_MARKERS)
+
+
+# ---- String-literal stripping (for skip_string_literals patterns) -----------
+
+_TS_LITERAL_RE: re.Pattern[str] = re.compile(
+    r"""(?P<sq>'(?:[^'\\\n]|\\.)*')"""          # single-quoted strings
+    r"""|(?P<dq>"(?:[^"\\\n]|\\.)*")"""         # double-quoted strings
+    r"""|(?P<bt>`(?:[^`\\]|\\.)*`)"""           # backtick template literals (single-line only)
+    r"""|(?P<rx>/(?:[^/\\\n]|\\.)+/[gimsuy]*)"""  # regex literals
+)
+
+
+def _strip_string_literals(line: str) -> str:
+    """Replace string and regex literals with spaces to prevent false positives.
+
+    Preserves line length so column offsets remain accurate.
+
+    Limitation: per-line only. Multi-line template literal continuation lines
+    are not stripped (the opening backtick line is stripped but continuation
+    lines appear as bare text). See test_ts_nocheck_inside_multiline_template_is_not_flagged.
+
+    Note: the regex literal arm may match division expressions (a / b / c).
+    This is an accepted limitation for the patterns that use skip_string_literals.
+    """
+    def _replace(m: re.Match[str]) -> str:
+        return " " * (m.end() - m.start())
+    return _TS_LITERAL_RE.sub(_replace, line)
+
+
 # ---- Stack-specific patterns -------------------------------------------------
 
 TYPESCRIPT_PATTERNS: list[PatternDef] = [
@@ -87,7 +168,8 @@ TYPESCRIPT_PATTERNS: list[PatternDef] = [
     {"pattern": r"eslint-disable", "rule": "R14", "severity": "MEDIUM", "category": "build",
      "description": "ESLint rule suppressed with eslint-disable", "phase": 0, "removable": True,
      "explanation": "eslint-disable comments bypass lint rules that exist to catch bugs. Each suppression should have a justification comment. Blanket disables indicate code that should be fixed, not silenced.",
-     "confidence": "high", "confidence_reason": "Lint suppression detected (R14)"},
+     "confidence": "high", "confidence_reason": "Lint suppression detected (R14)",
+     "skip_string_literals": True},
     {"pattern": r"dangerouslySetInnerHTML", "rule": "R05", "severity": "HIGH", "category": "security",
      "description": "dangerouslySetInnerHTML without sanitization (XSS risk)", "phase": 1,
      "explanation": "Setting innerHTML from untrusted data allows Cross-Site Scripting (XSS) attacks. An attacker can inject malicious scripts that steal session tokens or redirect users. Always sanitize with DOMPurify before rendering HTML.",
@@ -107,7 +189,8 @@ TYPESCRIPT_PATTERNS: list[PatternDef] = [
     {"pattern": r"as\s+any\b", "rule": "R07", "severity": "HIGH", "category": "typing",
      "description": "Type assertion to 'any' bypasses TypeScript safety", "phase": 2,
      "explanation": "Casting to 'any' silences the type checker but doesn't fix the underlying type mismatch. The code will fail at runtime when the actual type doesn't match expectations. Fix the type properly instead of casting.",
-     "confidence": "high", "confidence_reason": "Unsafe any type assertion (R07)"},
+     "confidence": "high", "confidence_reason": "Unsafe any type assertion (R07)",
+     "skip_string_literals": True},
     {"pattern": r"=\s*any\b", "rule": "R07", "severity": "HIGH", "category": "typing",
      "description": "Type alias assigned to 'any' bypasses TypeScript safety", "phase": 2,
      "explanation": "Assigning a type alias to 'any' (e.g., type Foo = any) propagates unsafe typing to every usage site. All code using this alias loses type checking. Define a proper type structure or use 'unknown' instead.",
@@ -209,7 +292,8 @@ TYPESCRIPT_PATTERNS: list[PatternDef] = [
     {"pattern": r"@ts-nocheck", "rule": "R14", "severity": "CRITICAL", "category": "build",
      "description": "@ts-nocheck disables TypeScript checking for entire file", "phase": 0,
      "explanation": "@ts-nocheck disables all type checking for the entire file. This is almost never acceptable in production code. Fix the type errors individually instead of disabling the type checker wholesale.",
-     "confidence": "high", "confidence_reason": "Entire-file type check disabled (R14)"},
+     "confidence": "high", "confidence_reason": "Entire-file type check disabled (R14)",
+     "skip_string_literals": True},
     {"pattern": r"as\s+unknown\s+as\b", "rule": "R14", "severity": "HIGH", "category": "typing",
      "description": "Double type assertion (as unknown as) bypasses all type safety", "phase": 2,
      "explanation": "The pattern 'as unknown as T' is a double assertion that bypasses TypeScript's type safety entirely. It forces any value to any type without checking. This almost always indicates a design flaw. Fix the types properly.",
@@ -236,6 +320,33 @@ TYPESCRIPT_PATTERNS: list[PatternDef] = [
      "description": "Angle-bracket type assertion to any", "phase": 2,
      "explanation": "The angle-bracket assertion <any>value is equivalent to 'value as any' and bypasses all type checking. Fix the underlying type mismatch instead of casting to any.",
      "confidence": "high", "confidence_reason": "Unsafe any type assertion (R07)"},
+    # --- Task 6: literal R12 sub-cases (additive; LLM scanner unchanged) ---
+    {"pattern": r"['\"]0['\"]\.repeat\(\s*(40|64)\s*\)",
+     "rule": "R12", "severity": "MEDIUM", "category": "data-integrity",
+     "description": "Placeholder hash literal — 40-zero or 64-zero string used as fake commit/SHA.",
+     "phase": 7,
+     "explanation": "Synthetic zero-length hashes mask missing data. Downstream consumers comparing hashes silently match the placeholder.",
+     "confidence": "high", "confidence_reason": "Placeholder hash literal (R12)"},
+    {"pattern": r"['\"`]https?://localhost[:/]",
+     "rule": "R12", "severity": "MEDIUM", "category": "data-integrity",
+     "description": "Hardcoded localhost URL.",
+     "phase": 7,
+     "explanation": "Localhost URLs in non-test code break in any environment that is not the developer's machine.",
+     "confidence": "high", "confidence_reason": "Hardcoded localhost URL (R12)",
+     "file_glob_excludes": ("**/*.test.ts", "**/*.test.tsx", "**/test/**", "**/tests/**", "**/__tests__/**", "**/*.spec.ts")},
+    # --- Task 6: literal R13 sub-cases (additive; LLM scanner unchanged) ---
+    {"pattern": r"['\"`]@humain/sdk['\"`]|['\"`]humain-sdk['\"`]|['\"`]com\.humain\.sdk['\"`]",
+     "rule": "R13", "severity": "MEDIUM", "category": "ssot-dry",
+     "description": "SDK package-name literal — should come from @humain/shared-constants.",
+     "phase": 5,
+     "explanation": "Hardcoded package identifiers across multiple files cause drift when packages are renamed.",
+     "confidence": "high", "confidence_reason": "SDK package-name literal (R13)"},
+    {"pattern": r"['\"`]\.h1-(routes|manifest)\.json['\"`]",
+     "rule": "R13", "severity": "MEDIUM", "category": "ssot-dry",
+     "description": "h1 manifest filename literal — should come from MANIFEST_FILE_NAME / ROUTE_MANIFEST_FILE_NAME SSOT.",
+     "phase": 5,
+     "explanation": "Manifest filenames are emitted by the h1 build and consumed in many places. The SSOT export already exists.",
+     "confidence": "high", "confidence_reason": "h1 manifest filename literal (R13)"},
 ]
 
 PYTHON_PATTERNS: list[PatternDef] = [
@@ -349,6 +460,26 @@ PYTHON_PATTERNS: list[PatternDef] = [
      "description": "subprocess.call is less safe than subprocess.run", "phase": 1,
      "explanation": "subprocess.call does not capture output and has less control than subprocess.run. Use subprocess.run with explicit arguments, capture_output=True, and shell=False for safer process execution.",
      "confidence": "high", "confidence_reason": "Less safe subprocess API (R05)"},
+    # --- Task 6: literal R12/R13 sub-cases (additive; LLM scanner unchanged) ---
+    {"pattern": r"['\"]0['\"] \* (40|64)\b|b['\"]0['\"] \* (40|64)\b",
+     "rule": "R12", "severity": "MEDIUM", "category": "data-integrity",
+     "description": "Placeholder hash literal — 40-zero or 64-zero bytes/string used as fake commit/SHA.",
+     "phase": 7,
+     "explanation": "Synthetic zero-length hashes mask missing data. Downstream consumers comparing hashes silently match the placeholder.",
+     "confidence": "high", "confidence_reason": "Placeholder hash literal (R12)"},
+    {"pattern": r"['\"]https?://localhost[:/]",
+     "rule": "R12", "severity": "MEDIUM", "category": "data-integrity",
+     "description": "Hardcoded localhost URL.",
+     "phase": 7,
+     "explanation": "Localhost URLs in non-test code break in any environment that is not the developer's machine.",
+     "confidence": "high", "confidence_reason": "Hardcoded localhost URL (R12)",
+     "file_glob_excludes": ("**/test_*.py", "**/*_test.py", "**/test/**", "**/tests/**", "**/*_tests.py")},
+    {"pattern": r"['\"]\.h1-(routes|manifest)\.json['\"]",
+     "rule": "R13", "severity": "MEDIUM", "category": "ssot-dry",
+     "description": "h1 manifest filename literal — should come from MANIFEST_FILE_NAME / ROUTE_MANIFEST_FILE_NAME SSOT.",
+     "phase": 5,
+     "explanation": "Manifest filenames are emitted by the h1 build and consumed in many places. The SSOT export already exists.",
+     "confidence": "high", "confidence_reason": "h1 manifest filename literal (R13)"},
 ]
 
 JAVA_PATTERNS: list[PatternDef] = [
@@ -456,6 +587,19 @@ JAVA_PATTERNS: list[PatternDef] = [
      "description": "printStackTrace() in production code", "phase": 5, "removable": True,
      "explanation": "printStackTrace() writes to stderr without structure or log levels. Replace with a logging framework call that captures the exception with proper context and can be monitored.",
      "confidence": "medium", "confidence_reason": "Debug println left in code (R09-M1)"},
+    # --- Task 6: literal R13 sub-cases (additive; LLM scanner unchanged) ---
+    {"pattern": r'"\.h1-(routes|manifest)\.json"',
+     "rule": "R13", "severity": "MEDIUM", "category": "ssot-dry",
+     "description": "h1 manifest filename literal — should come from a SSOT constant.",
+     "phase": 5,
+     "explanation": "Manifest filenames are emitted by the h1 build and consumed in many places. Define a shared constant and import it.",
+     "confidence": "high", "confidence_reason": "h1 manifest filename literal (R13)"},
+    {"pattern": r'"com\.humain\.sdk"',
+     "rule": "R13", "severity": "MEDIUM", "category": "ssot-dry",
+     "description": "SDK package-name literal — should come from a shared constants class.",
+     "phase": 5,
+     "explanation": "Hardcoded package identifiers across multiple files cause drift when packages are renamed.",
+     "confidence": "high", "confidence_reason": "SDK package-name literal (R13)"},
 ]
 
 GO_PATTERNS: list[PatternDef] = [
@@ -988,6 +1132,18 @@ def scan_project(
             if _should_skip(rel_path):
                 continue
 
+            # Meta-file exclusion: R09/R13/R14 are rule-detection rules; skip
+            # them for files whose job is to detect those same patterns.
+            if pat_def["rule"] in _META_FILE_SKIP_RULES and _is_meta_file(rel_path, project_dir):
+                continue
+
+            # Glob-based file exclusion (e.g., skip localhost pattern in test files)
+            file_glob_excludes = pat_def.get("file_glob_excludes", ())
+            if file_glob_excludes and any(
+                fnmatch.fnmatch(rel_path, glob) for glob in file_glob_excludes
+            ):
+                continue
+
             # Layer-based exclusion (e.g., skip console.error in API routes)
             layer_exclude = pat_def.get("layer_exclude")
             if layer_exclude:
@@ -1003,6 +1159,14 @@ def scan_project(
             # (e.g., Java raw type `List` matched in `import java.util.List;`)
             if pat_def.get("skip_import_lines", False) and _is_import_line(code_stripped):
                 continue
+
+            # skip_string_literals: if the pattern only matches inside a string
+            # or regex literal, it is not a real violation (e.g., @ts-nocheck
+            # appearing in a docstring or JSDoc comment about the directive).
+            if pat_def.get("skip_string_literals", False):
+                stripped_line = _strip_string_literals(code_stripped)
+                if not re.search(pattern, stripped_line):
+                    continue
 
             # innerHTML = "" / '' / `` is safe clearing, not an XSS vector
             if "innerHTML" in pattern and _is_innerhtml_clear(code_stripped):

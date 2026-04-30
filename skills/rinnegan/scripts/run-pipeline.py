@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Rinnegan pipeline state machine.
 Run repeatedly. Each run: check disk state, auto-advance deterministic steps, output ONE action for LLM.
-Usage: run-pipeline.py <project_dir>"""
-import json, os, sys, subprocess, glob
+Usage: run-pipeline.py <project_dir> [--audit-only]"""
+import argparse, json, os, sys, subprocess, glob
 
 # Token budget tracking (graceful fallback if dojutsu not installed)
 import sys as _sys
@@ -36,9 +36,22 @@ from report_contract import (
 
 _cfg = DojutsuConfig()
 
-project_dir = sys.argv[1]
+_parser = argparse.ArgumentParser(description="Rinnegan pipeline state machine.")
+_parser.add_argument("project_dir")
+_parser.add_argument("--audit-only", action="store_true",
+    help="Skip enrichment stage. Render directly from findings.jsonl.")
+_args = _parser.parse_args()
+project_dir = _args.project_dir
+audit_only = _args.audit_only
+
 audit_dir = os.path.join(project_dir, "docs", "audit")
 skill_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+_audit_only_marker = os.path.join(audit_dir, "data", ".audit-only")
+if audit_only:
+    os.makedirs(os.path.join(audit_dir, "data"), exist_ok=True)
+    with open(_audit_only_marker, "w") as _f:
+        _f.write("1\n")
 
 def file_exists(path):
     return os.path.isfile(os.path.join(audit_dir, path))
@@ -101,11 +114,15 @@ def get_state():
         if not f.endswith(".done")
     ]
     if not enriched_files:
+        if os.path.exists(_audit_only_marker):
+            return "NEEDS_RENDERING"
         return "NEEDS_ENRICHMENT"
     complete_layers, incomplete_layers = validate_enrichment_completeness(
         os.path.join(audit_dir, "data/findings.jsonl"), enriched_dir
     )
     if incomplete_layers:
+        if os.path.exists(_audit_only_marker):
+            return "NEEDS_RENDERING"
         return "NEEDS_ENRICHMENT"
     if validate_null_fix_coverage(audit_dir)["triggered"]:
         return "BLOCKED_NULL_FIX"
@@ -268,6 +285,7 @@ if state == "NEEDS_SCANNING":
 
         print(f"\nACTION: Read {skill_dir}/scanner-prompt.md then dispatch up to 5 scanner Agents.")
         print(f"  MODEL: {scanner_tier} ({scanner_model})")
+        print(f"  ENFORCE: pass {_cfg.enforce_model_directive('scanner')} to the Agent tool call (NOT the parent default)")
         print(f"  CONTEXT: {_cfg.context_window_for('scanner'):,} tokens")
         print(f"  ROLE: dojutsu-scanner (if agent-mux configured)")
         print(f"Each scanner Agent prompt must include: scanner-prompt.md content + file list + stack + layer + output path.")
@@ -321,6 +339,7 @@ elif state == "NEEDS_AGGREGATION":
 
     print(f"\nACTION: Read {skill_dir}/aggregator-prompt.md then dispatch 1 Aggregator Agent.")
     print(f"  MODEL: {agg_tier} ({_cfg.model_for('aggregator')})")
+    print(f"  ENFORCE: pass {_cfg.enforce_model_directive('aggregator')} to the Agent tool call (NOT the parent default)")
     print(f"  ROLE: dojutsu-scanner (if agent-mux configured)")
     print(f"Include in prompt: aggregator-prompt.md content + these paths:")
     print(f"  SCANNER_OUTPUT_DIR: {audit_dir}/data/scanner-output/")
@@ -359,6 +378,7 @@ elif state == "NEEDS_ENRICHMENT":
 
         print(f"\nACTION: Read {skill_dir}/fix-enricher-instructions.md then dispatch 1 Fix Enricher Agent per layer.")
         print(f"  MODEL: {enr_tier} ({_cfg.model_for('enricher')})")
+        print(f"  ENFORCE: pass {_cfg.enforce_model_directive('enricher')} to the Agent tool call (NOT the parent default)")
         print(f"  ROLE: dojutsu-enricher (if agent-mux configured)")
         print(f"  NOTE: Enrichers must understand code well enough to write correct fixes.")
         for name, count in sorted(pending_layers.items(), key=lambda x: -x[1]):
@@ -366,6 +386,10 @@ elif state == "NEEDS_ENRICHMENT":
         print(f"\nAfter EACH enricher completes, its output + sentinel are safe on disk.")
         print(f"When all enrichers are done, run: python3 {skill_dir}/scripts/merge-enriched.py {audit_dir}")
         print(f"Then run this script again.")
+
+elif state == "NEEDS_RENDERING":
+    print(f"\nAUDIT_ONLY: Enrichment stage skipped via --audit-only marker.")
+    print(f"ACTION: Run this script again to advance to report generation.")
 
 elif state == "NEEDS_PHASES":
     family_result = collapse_finding_families(audit_dir)

@@ -64,13 +64,15 @@ For each finding, verify that the finding's `file` field is within its `scanner`
 
 Apply these deduplication rules in order:
 
-#### Rule 1: Same file:line from multiple scanners
+#### Rule 1: Same file, line, AND rule from multiple scanners
 
-When two or more findings reference the exact same `file` AND `line`:
+When two or more findings reference the exact same `file` AND `line` AND `rule`:
 - Compare their `severity` values using the ranking: CRITICAL > HIGH > MEDIUM > LOW > REVIEW.
 - Keep the finding with the highest severity.
-- If severity is equal, keep the finding with the longer `explanation` (more detail is better).
-- Set the `scanner` field of the kept finding to a comma-separated list of all scanners that reported it (e.g., `"routes-layer,services-layer"`).
+- If severity is equal, keep the finding with the longer `explanation`.
+- Set the `scanner` field of the kept finding to a comma-separated list of all scanners that reported it (e.g., `"grep-scanner,misc"`).
+
+When `(file, line)` matches but `rule` differs, keep ALL findings — different rules at the same line are separate violations and must be preserved. The grep scanner and the LLM scanner can both emit on the same line if they detect different rule violations there.
 
 #### Rule 2: Same pattern in same file but different lines
 

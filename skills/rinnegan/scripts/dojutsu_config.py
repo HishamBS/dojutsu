@@ -52,6 +52,12 @@ _DEFAULT_TIER_MODELS: dict[str, dict[str, str]] = {
     "premium": {"claude": "claude-opus-4-6"},
 }
 
+_TIER_TO_SHORT_NAME: dict[str, str] = {
+    "cheap": "haiku",
+    "mid": "sonnet",
+    "premium": "opus",
+}
+
 _DEFAULT_ASSIGNMENTS: dict[str, str] = {
     "scanner": "mid",
     "aggregator": "cheap",
@@ -160,6 +166,23 @@ class DojutsuConfig:
         # Fall back to built-in tier models
         fallback_tier = _DEFAULT_TIER_MODELS.get(tier_name, {})
         return fallback_tier.get(engine, _DEFAULT_MODEL)
+
+    def enforce_model_directive(self, role: str, engine: str = "claude") -> str:
+        """Return the literal Agent-tool directive for the role's tier.
+
+        Guardrail only. The orchestrator reads this and chooses to comply.
+        Rinnegan does not enforce dispatch-time model selection.
+
+        Raises KeyError if the role is not in assignments.
+        """
+        all_assignments = {**_DEFAULT_ASSIGNMENTS}
+        all_assignments.update(
+            self._data.get("models", {}).get("assignments", {})
+        )
+        if role not in all_assignments:
+            raise KeyError(role)
+        tier = self.tier_for(role)
+        return f'model: "{_TIER_TO_SHORT_NAME[tier]}"'
 
     def context_window_for(self, role: str) -> int:
         """Return the context window (tokens) for the tier assigned to *role*."""

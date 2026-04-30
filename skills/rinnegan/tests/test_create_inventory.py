@@ -1,17 +1,26 @@
 """Tests for deterministic inventory tagging."""
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
+import sys
 import tempfile
 
-
-SCRIPT_PATH = os.path.join(
+SCRIPTS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "scripts",
-    "create-inventory.py",
 )
+SCRIPT_PATH = os.path.join(SCRIPTS_DIR, "create-inventory.py")
+
+# Load the hyphenated script as an importable module
+_spec = importlib.util.spec_from_file_location("create_inventory", SCRIPT_PATH)
+assert _spec and _spec.loader
+_module = importlib.util.module_from_spec(_spec)
+sys.path.insert(0, SCRIPTS_DIR)
+sys.modules["create_inventory"] = _module
+_spec.loader.exec_module(_module)  # type: ignore[union-attr]
 
 
 class TestCreateInventory:
@@ -37,3 +46,57 @@ class TestCreateInventory:
                 inventory = json.load(fh)
             assert inventory["files"][0]["tag"] == "GENERATED"
             assert inventory["files"][0]["skip_reason"] == "Generated source file"
+
+
+def test_build_inventory_returns_inventory_dict(tmp_path):
+    """Refactor: build_inventory is now an importable callable."""
+    from create_inventory import build_inventory
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "tiny.ts").write_text("export const x = 1;\n")
+    (src / "real.ts").write_text("\n".join(f"const x{i} = {i};" for i in range(50)) + "\n")
+    inv = build_inventory(str(tmp_path))
+    paths = {f["path"] for f in inv["files"]}
+    assert "src/tiny.ts" in paths
+    assert "src/real.ts" in paths
+    assert inv["total_loc"] >= 50
+
+
+def test_inventory_tags_tiny_files_as_nominal(tmp_path):
+    """Files under loc_threshold (default 10) are tagged nominal=True."""
+    from create_inventory import build_inventory
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "tiny.ts").write_text("export const x = 1;\n")  # 1 LOC
+    (src / "real.ts").write_text("\n".join(f"const x{i} = {i};" for i in range(50)) + "\n")
+    inv = build_inventory(str(tmp_path))
+    by_path = {f["path"]: f for f in inv["files"]}
+    assert by_path["src/tiny.ts"]["nominal"] is True
+    assert by_path["src/real.ts"]["nominal"] is False
+
+
+def test_inventory_respects_authority_paths_file(tmp_path):
+    """Files under authority paths are nominal=False even if tiny."""
+    from create_inventory import build_inventory
+    rinnegan_dir = tmp_path / ".rinnegan"
+    rinnegan_dir.mkdir()
+    (rinnegan_dir / "authority-paths.txt").write_text(
+        "packages/shared-constants/\n"
+    )
+    p = tmp_path / "packages" / "shared-constants" / "src"
+    p.mkdir(parents=True)
+    (p / "tiny-ssot.ts").write_text("export const X = 1;\n")
+    inv = build_inventory(str(tmp_path))
+    by_path = {f["path"]: f for f in inv["files"]}
+    assert by_path["packages/shared-constants/src/tiny-ssot.ts"]["nominal"] is False
+
+
+def test_inventory_tags_meta_files(tmp_path):
+    """Meta-files are flagged is_meta_file=True for downstream LLM-batch exclusion."""
+    from create_inventory import build_inventory
+    p = tmp_path / "scripts" / "ci"
+    p.mkdir(parents=True)
+    (p / "enforce-rules.ts").write_text("const RULE_PATTERNS = [];\n")
+    inv = build_inventory(str(tmp_path))
+    by_path = {f["path"]: f for f in inv["files"]}
+    assert by_path["scripts/ci/enforce-rules.ts"]["is_meta_file"] is True

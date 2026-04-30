@@ -1,0 +1,13 @@
+{
+  "expected": [
+    {"rule": "R09", "file": "src/banner-fixture.ts", "must_be_found_by": "grep-scanner"},
+    {"rule": "R12", "file": "src/placeholder-fixture.ts", "must_be_found_by": "grep-scanner"},
+    {"rule": "R12", "file": "src/localhost-fixture.ts", "must_be_found_by": "grep-scanner"},
+    {"rule": "R13", "file": "src/sdk-package-fixture.ts", "must_be_found_by": "grep-scanner"},
+    {"rule": "R13", "file": "src/manifest-name-fixture.ts", "must_be_found_by": "grep-scanner"},
+    {"rule": "R14", "file": "src/nocheck-fixture.ts", "must_be_found_by": "grep-scanner"},
+    {"rule": "R23", "file": "src/silent-catch-fixture.ts", "must_be_found_by": "any"},
+    {"rule": "R10", "file": "src/cross-lang-fixture.ts", "must_be_found_by": "llm"},
+    {"rule": "A01", "file": "src/codegen-heuristic-fixture.ts", "must_be_found_by": "llm"}
+  ]
+}

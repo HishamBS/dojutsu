@@ -21,6 +21,7 @@ def _make_finding(**overrides: object) -> dict[str, object]:
         "description": "TLS validation disabled",
         "severity": "HIGH",
         "category": "security",
+        "confidence": "high",
     }
     base.update(overrides)
     return base
@@ -332,3 +333,75 @@ class TestRejectedFile:
         _write_jsonl(path, [_make_finding()])
         validate_scanner_file(path)
         assert not os.path.exists(path + ".rejected")
+
+
+def _read_findings(path: str) -> list[dict]:
+    """Read JSONL file and return list of finding dicts."""
+    out = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                out.append(json.loads(line))
+    return out
+
+
+def test_low_confidence_critical_capped_to_medium(tmp_path: object) -> None:
+    sf = tmp_path / "scanner-1-misc.jsonl"
+    sf.write_text(json.dumps({
+        "rule": "R23", "severity": "CRITICAL", "confidence": "low",
+        "category": "architecture", "file": "a.ts", "line": 1,
+        "snippet": "x", "description": "d", "explanation": "e",
+        "search_pattern": "x", "current_code": "x", "phase": 4,
+        "effort": "low", "scanner": "misc",
+    }) + "\n")
+    valid_count, rejected_count, _ = validate_scanner_file(str(sf), {"a.ts"})
+    assert valid_count == 1 and rejected_count == 0
+    findings = _read_findings(str(sf))
+    assert len(findings) == 1
+    assert findings[0]["severity"] == "MEDIUM"
+    assert findings[0].get("severity_capped_from") == "CRITICAL"
+
+
+def test_medium_confidence_critical_capped_to_high(tmp_path: object) -> None:
+    sf = tmp_path / "scanner-1-misc.jsonl"
+    sf.write_text(json.dumps({
+        "rule": "R23", "severity": "CRITICAL", "confidence": "medium",
+        "category": "architecture", "file": "a.ts", "line": 1,
+        "snippet": "x", "description": "d", "explanation": "e",
+        "search_pattern": "x", "current_code": "x", "phase": 4,
+        "effort": "low", "scanner": "misc",
+    }) + "\n")
+    valid_count, _, _ = validate_scanner_file(str(sf), {"a.ts"})
+    findings = _read_findings(str(sf))
+    assert findings[0]["severity"] == "HIGH"
+    assert findings[0].get("severity_capped_from") == "CRITICAL"
+
+
+def test_high_confidence_critical_unchanged(tmp_path: object) -> None:
+    sf = tmp_path / "scanner-1-misc.jsonl"
+    sf.write_text(json.dumps({
+        "rule": "R23", "severity": "CRITICAL", "confidence": "high",
+        "category": "architecture", "file": "a.ts", "line": 1,
+        "snippet": "x", "description": "d", "explanation": "e",
+        "search_pattern": "x", "current_code": "x", "phase": 4,
+        "effort": "low", "scanner": "misc",
+    }) + "\n")
+    validate_scanner_file(str(sf), {"a.ts"})
+    findings = _read_findings(str(sf))
+    assert findings[0]["severity"] == "CRITICAL"
+    assert "severity_capped_from" not in findings[0]
+
+
+def test_missing_confidence_treated_as_low(tmp_path: object) -> None:
+    sf = tmp_path / "scanner-1-misc.jsonl"
+    sf.write_text(json.dumps({
+        "rule": "R23", "severity": "CRITICAL",
+        "category": "architecture", "file": "a.ts", "line": 1,
+        "snippet": "x", "description": "d", "explanation": "e",
+        "search_pattern": "x", "current_code": "x", "phase": 4,
+        "effort": "low", "scanner": "misc",
+    }) + "\n")
+    validate_scanner_file(str(sf), {"a.ts"})
+    findings = _read_findings(str(sf))
+    assert findings[0]["severity"] == "MEDIUM"

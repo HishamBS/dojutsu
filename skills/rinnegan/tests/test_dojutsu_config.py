@@ -305,6 +305,31 @@ class TestConfigSearchPath:
 
 
 # ---------------------------------------------------------------------------
+# enforce_model_directive
+# ---------------------------------------------------------------------------
+
+class TestEnforceModelDirective:
+    """enforce_model_directive returns the literal Agent-tool directive string."""
+
+    def test_enforce_model_directive_for_scanner_role(self) -> None:
+        cfg = DojutsuConfig(config_path="/nonexistent/path/dojutsu.toml")
+        assert cfg.enforce_model_directive("scanner") == 'model: "sonnet"'
+
+    def test_enforce_model_directive_for_aggregator_role(self) -> None:
+        cfg = DojutsuConfig(config_path="/nonexistent/path/dojutsu.toml")
+        assert cfg.enforce_model_directive("aggregator") == 'model: "haiku"'
+
+    def test_enforce_model_directive_for_master_hub_generator_role(self) -> None:
+        cfg = DojutsuConfig(config_path="/nonexistent/path/dojutsu.toml")
+        assert cfg.enforce_model_directive("master_hub_generator") == 'model: "opus"'
+
+    def test_enforce_model_directive_unknown_role_raises(self) -> None:
+        cfg = DojutsuConfig(config_path="/nonexistent/path/dojutsu.toml")
+        with pytest.raises(KeyError):
+            cfg.enforce_model_directive("nonexistent_role")
+
+
+# ---------------------------------------------------------------------------
 # Constants are exported
 # ---------------------------------------------------------------------------
 

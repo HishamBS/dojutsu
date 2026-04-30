@@ -58,6 +58,7 @@ Each finding is one JSON object per line in `findings.jsonl`:
 | `layer` | Yes | string | Architectural layer this file belongs to (from inventory) |
 | `scanner` | Yes | string | Which scanner produced this finding |
 | `search_pattern` | Yes | string | Grep-able pattern that identifies this violation (e.g., "verify=False"). Used by Rasengan for stale-fix detection when line numbers shift. |
+| `severity_capped_from` | No | string | Set automatically by the validator when confidence-based severity capping reduced the original severity (e.g., `"CRITICAL"` when a low-confidence finding was capped to `"MEDIUM"`). Informational only — `create-phase-tasks.py:_transform_task` copies fields by explicit key enumeration and does NOT propagate this field to rasengan task JSON. Visible to operators reading raw `findings.jsonl`. |
 | `cluster_id` | No | string | Deterministic cluster identifier assigned by Byakugan after clustering. Published findings must carry this once `deep/clusters.json` exists. |
 | `completed_at` | No | string | ISO timestamp when Rasengan resolved this task. Null until resolved. |
 | `resolution` | No | string | How Rasengan resolved: `applied` / `line-shifted` / `already_resolved` / `skipped` / `failed`. Null until resolved. |

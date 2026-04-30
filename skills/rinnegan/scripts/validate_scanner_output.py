@@ -14,6 +14,33 @@ from normalize_categories import (
 )
 DENSITY_RULE_THRESHOLD = 0.60  # warn if any single rule exceeds 60% of findings
 
+_CONFIDENCE_SEVERITY_CEILING: dict[str, str] = {
+    "low": "MEDIUM",
+    "medium": "HIGH",
+    "high": "CRITICAL",
+}
+
+_SEVERITY_RANK: dict[str, int] = {
+    "REVIEW": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4,
+}
+
+
+def _apply_confidence_ceiling(finding: dict) -> None:
+    """Cap finding['severity'] by confidence. Mutates in place.
+
+    low -> MEDIUM, medium -> HIGH, only high may emit CRITICAL.
+    Missing/invalid confidence defaults to 'low' (most conservative).
+    Records original severity in 'severity_capped_from' on cap.
+    """
+    confidence = str(finding.get("confidence", "low")).lower()
+    if confidence not in _CONFIDENCE_SEVERITY_CEILING:
+        confidence = "low"
+    ceiling = _CONFIDENCE_SEVERITY_CEILING[confidence]
+    current = str(finding.get("severity", "MEDIUM")).upper()
+    if _SEVERITY_RANK.get(current, 2) > _SEVERITY_RANK[ceiling]:
+        finding["severity_capped_from"] = current
+        finding["severity"] = ceiling
+
 
 def validate_scanner_file(
     scanner_file: str,
@@ -85,6 +112,9 @@ def validate_scanner_file(
                 finding["severity"] = "MEDIUM"
             else:
                 finding["severity"] = raw_severity
+
+            # Check 8: confidence-based severity ceiling
+            _apply_confidence_ceiling(finding)
 
             valid.append(finding)
 

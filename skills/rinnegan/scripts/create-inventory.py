@@ -4,8 +4,8 @@ Walks file tree, counts LOC, classifies layers, writes inventory.json.
 Deterministic — no LLM needed. Runs in <2 seconds on 1000+ files."""
 import os, json, sys
 
-project_dir = sys.argv[1]
-audit_dir = sys.argv[2]
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from grep_scanner_lib import _is_meta_file
 
 LAYER_PATTERNS = {
     'api-routes': ['app/api/', 'pages/api/', 'src/app/api/'],
@@ -72,37 +72,26 @@ EXTENSIONS = {
     'rust': {'.rs'},
 }
 
-# Auto-detect stack
-stack = 'unknown'
-framework = 'unknown'
-if os.path.exists(os.path.join(project_dir, 'package.json')):
-    stack = 'typescript'
-    try:
-        pkg = json.load(open(os.path.join(project_dir, 'package.json')))
-        deps = {**pkg.get('dependencies', {}), **pkg.get('devDependencies', {})}
-        if 'next' in deps: framework = 'nextjs'
-        elif 'react' in deps: framework = 'react'
-        elif 'vue' in deps: framework = 'vue'
-        elif 'express' in deps: framework = 'express'
-    except: pass
-elif os.path.exists(os.path.join(project_dir, 'pyproject.toml')) or os.path.exists(os.path.join(project_dir, 'requirements.txt')):
-    stack = 'python'
-    if os.path.exists(os.path.join(project_dir, 'pyproject.toml')):
-        try:
-            content = open(os.path.join(project_dir, 'pyproject.toml')).read()
-            if 'fastapi' in content.lower(): framework = 'fastapi'
-            elif 'django' in content.lower(): framework = 'django'
-            elif 'flask' in content.lower(): framework = 'flask'
-        except: pass
-elif os.path.exists(os.path.join(project_dir, 'pom.xml')) or os.path.exists(os.path.join(project_dir, 'build.gradle')):
-    stack = 'java'
+NOMINAL_LOC_THRESHOLD: int = 10  # files under this LOC tagged nominal unless in authority paths
 
-exts = EXTENSIONS.get(stack, {'.ts', '.tsx', '.py', '.java'})
 
-# Walk files
-files = []
-total_loc = 0
-layers = {}
+def _read_authority_paths(project_dir: str) -> tuple[str, ...]:
+    """Read newline-separated path prefixes from <project_dir>/.rinnegan/authority-paths.txt.
+
+    Empty or missing file returns empty tuple. No hardcoded defaults.
+    """
+    path = os.path.join(project_dir, ".rinnegan", "authority-paths.txt")
+    if not os.path.isfile(path):
+        return ()
+    with open(path, encoding="utf-8") as f:
+        return tuple(line.strip() for line in f if line.strip() and not line.startswith("#"))
+
+
+def _is_nominal(rel_path: str, loc: int, authority_paths: tuple[str, ...]) -> bool:
+    """Tiny files outside authority paths are nominal (excluded from LLM batches)."""
+    if loc >= NOMINAL_LOC_THRESHOLD:
+        return False
+    return not any(rel_path.startswith(p) for p in authority_paths)
 
 
 def has_generated_marker(file_path: str) -> bool:
@@ -121,86 +110,152 @@ def has_generated_marker(file_path: str) -> bool:
     )
     return any(marker in header for marker in markers)
 
-for root, dirs, filenames in os.walk(project_dir):
-    dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
-    for fname in filenames:
-        if not any(fname.endswith(ext) for ext in exts):
-            continue
-        fpath = os.path.join(root, fname)
-        rel_path = os.path.relpath(fpath, project_dir)
-        try:
-            with open(fpath, 'r', errors='ignore') as f:
-                loc = sum(1 for _ in f)
-        except:
-            loc = 0
 
-        # Classify layer — try stack-specific patterns first, then generic
-        layer = 'misc'
-        rel_lower = rel_path.lower().replace('\\', '/')
-        stack_patterns = {
-            'java': JAVA_LAYER_PATTERNS,
-            'python': PYTHON_LAYER_PATTERNS,
-            'go': GO_LAYER_PATTERNS,
-        }.get(stack, {})
-        # Stack-specific patterns take priority
-        for layer_name, patterns in stack_patterns.items():
-            if any(p in rel_lower for p in patterns):
-                layer = layer_name
-                break
-        # Fall back to generic patterns if still misc
-        if layer == 'misc':
-            for layer_name, patterns in LAYER_PATTERNS.items():
+def _detect_stack(project_dir: str) -> tuple[str, str]:
+    """Return (stack, framework) for the project."""
+    stack = 'unknown'
+    framework = 'unknown'
+    if os.path.exists(os.path.join(project_dir, 'package.json')):
+        stack = 'typescript'
+        try:
+            pkg = json.load(open(os.path.join(project_dir, 'package.json')))
+            deps = {**pkg.get('dependencies', {}), **pkg.get('devDependencies', {})}
+            if 'next' in deps:
+                framework = 'nextjs'
+            elif 'react' in deps:
+                framework = 'react'
+            elif 'vue' in deps:
+                framework = 'vue'
+            elif 'express' in deps:
+                framework = 'express'
+        except Exception:
+            pass
+    elif (os.path.exists(os.path.join(project_dir, 'pyproject.toml'))
+          or os.path.exists(os.path.join(project_dir, 'requirements.txt'))):
+        stack = 'python'
+        if os.path.exists(os.path.join(project_dir, 'pyproject.toml')):
+            try:
+                content = open(os.path.join(project_dir, 'pyproject.toml')).read()
+                if 'fastapi' in content.lower():
+                    framework = 'fastapi'
+                elif 'django' in content.lower():
+                    framework = 'django'
+                elif 'flask' in content.lower():
+                    framework = 'flask'
+            except Exception:
+                pass
+    elif (os.path.exists(os.path.join(project_dir, 'pom.xml'))
+          or os.path.exists(os.path.join(project_dir, 'build.gradle'))):
+        stack = 'java'
+    return stack, framework
+
+
+def build_inventory(project_dir: str, audit_dir: str | None = None) -> dict:
+    """Walk project_dir, classify files, return inventory dict.
+
+    If audit_dir is provided, also writes inventory.json to <audit_dir>/data/.
+    """
+    stack, framework = _detect_stack(project_dir)
+    authority_paths = _read_authority_paths(project_dir)
+    exts = EXTENSIONS.get(stack, {'.ts', '.tsx', '.py', '.java'})
+
+    files = []
+    total_loc = 0
+    layers: dict[str, dict] = {}
+
+    for root, dirs, filenames in os.walk(project_dir):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        for fname in filenames:
+            if not any(fname.endswith(ext) for ext in exts):
+                continue
+            fpath = os.path.join(root, fname)
+            rel_path = os.path.relpath(fpath, project_dir)
+            try:
+                with open(fpath, 'r', errors='ignore') as f:
+                    loc = sum(1 for _ in f)
+            except Exception:
+                loc = 0
+
+            # Classify layer — try stack-specific patterns first, then generic
+            layer = 'misc'
+            rel_lower = rel_path.lower().replace('\\', '/')
+            stack_patterns = {
+                'java': JAVA_LAYER_PATTERNS,
+                'python': PYTHON_LAYER_PATTERNS,
+                'go': GO_LAYER_PATTERNS,
+            }.get(stack, {})
+            for layer_name, patterns in stack_patterns.items():
                 if any(p in rel_lower for p in patterns):
                     layer = layer_name
                     break
+            if layer == 'misc':
+                for layer_name, patterns in LAYER_PATTERNS.items():
+                    if any(p in rel_lower for p in patterns):
+                        layer = layer_name
+                        break
 
-        # Tag
-        tag = 'SOURCE'
-        skip_reason = None
-        if any(p in rel_lower for p in ['__tests__/', '.test.', '.spec.', '/test/', '/tests/']):
-            tag = 'TEST'
-        elif any(p in rel_lower for p in ['generated/', 'auto-generated']) or has_generated_marker(fpath):
-            tag = 'GENERATED'
-            skip_reason = "Generated source file"
+            # Tag
+            tag = 'SOURCE'
+            skip_reason = None
+            if any(p in rel_lower for p in ['__tests__/', '.test.', '.spec.', '/test/', '/tests/']):
+                tag = 'TEST'
+            elif any(p in rel_lower for p in ['generated/', 'auto-generated']) or has_generated_marker(fpath):
+                tag = 'GENERATED'
+                skip_reason = "Generated source file"
 
-        if loc > MAX_FILE_LOC:
-            tag = 'OVERSIZED'
-            skip_reason = f"Exceeds {MAX_FILE_LOC} LOC limit ({loc} lines)"
+            if loc > MAX_FILE_LOC:
+                tag = 'OVERSIZED'
+                skip_reason = f"Exceeds {MAX_FILE_LOC} LOC limit ({loc} lines)"
 
-        file_entry = {"path": rel_path, "loc": loc, "layer": layer, "tag": tag}
-        if skip_reason:
-            file_entry["skip_reason"] = skip_reason
-        files.append(file_entry)
-        total_loc += loc
-        if layer not in layers:
-            layers[layer] = {"files": [], "loc": 0}
-        layers[layer]["files"].append(rel_path)
-        layers[layer]["loc"] += loc
+            nominal = _is_nominal(rel_path.replace('\\', '/'), loc, authority_paths)
+            is_meta = _is_meta_file(rel_path.replace('\\', '/'), project_dir)
 
-# Create output directories
-os.makedirs(f"{audit_dir}/data/scanner-output", exist_ok=True)
-os.makedirs(f"{audit_dir}/data/tasks", exist_ok=True)
-os.makedirs(f"{audit_dir}/layers", exist_ok=True)
-os.makedirs(f"{audit_dir}/phases", exist_ok=True)
+            file_entry: dict = {"path": rel_path, "loc": loc, "layer": layer, "tag": tag,
+                                "nominal": nominal, "is_meta_file": is_meta}
+            if skip_reason:
+                file_entry["skip_reason"] = skip_reason
+            files.append(file_entry)
+            total_loc += loc
+            if layer not in layers:
+                layers[layer] = {"files": [], "loc": 0}
+            layers[layer]["files"].append(rel_path)
+            layers[layer]["loc"] += loc
 
-# Write inventory
-inventory = {
-    "root": os.path.basename(project_dir),
-    "stack": stack,
-    "framework": framework,
-    "total_files": len(files),
-    "total_loc": total_loc,
-    "layers": layers,
-    "files": files
-}
-json.dump(inventory, open(f"{audit_dir}/data/inventory.json", "w"), indent=2)
+    inventory = {
+        "root": os.path.basename(project_dir),
+        "stack": stack,
+        "framework": framework,
+        "total_files": len(files),
+        "total_loc": total_loc,
+        "layers": layers,
+        "files": files,
+    }
 
-# Write empty scope-map
-json.dump({}, open(f"{audit_dir}/data/scanner-output/scope-map.json", "w"))
+    if audit_dir:
+        os.makedirs(os.path.join(audit_dir, "data", "scanner-output"), exist_ok=True)
+        os.makedirs(os.path.join(audit_dir, "data", "tasks"), exist_ok=True)
+        os.makedirs(os.path.join(audit_dir, "layers"), exist_ok=True)
+        os.makedirs(os.path.join(audit_dir, "phases"), exist_ok=True)
+        with open(os.path.join(audit_dir, "data", "inventory.json"), "w") as f:
+            json.dump(inventory, f, indent=2)
+        # Write empty scope-map
+        json.dump({}, open(os.path.join(audit_dir, "data", "scanner-output", "scope-map.json"), "w"))
 
-print(f"Stack: {stack}/{framework}")
-print(f"Files: {len(files)}, LOC: {total_loc}, Layers: {len(layers)}")
-for name, data in sorted(layers.items(), key=lambda x: -x[1]['loc']):
-    print(f"  {name}: {len(data['files'])} files, {data['loc']} LOC")
-print(f"Output: {audit_dir}/data/inventory.json")
-print(f"Directories created: {audit_dir}/{{data,layers,phases}}")
+    return inventory
+
+
+if __name__ == "__main__":
+    project_dir = sys.argv[1]
+    audit_dir = sys.argv[2]
+    inv = build_inventory(project_dir, audit_dir)
+    stack = inv["stack"]
+    framework = inv["framework"]
+    files = inv["files"]
+    layers = inv["layers"]
+    total_loc = inv["total_loc"]
+    print(f"Stack: {stack}/{framework}")
+    print(f"Files: {len(files)}, LOC: {total_loc}, Layers: {len(layers)}")
+    for name, data in sorted(layers.items(), key=lambda x: -x[1]['loc']):
+        print(f"  {name}: {len(data['files'])} files, {data['loc']} LOC")
+    print(f"Output: {audit_dir}/data/inventory.json")
+    print(f"Directories created: {audit_dir}/{{data,layers,phases}}")
