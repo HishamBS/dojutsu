@@ -59,9 +59,9 @@ Generate the report as a markdown summary. **Write it to `docs/audit/remediation
 | LOW | [N] | [N] | [N resolved] |
 | **Total** | **[N]** | **[N remaining]** | **[N resolved]** |
 
-**Before:** Read severity counts from `data/findings.jsonl.bak` (backup from before remediation).
+**Before:** Read severity counts from `data/findings.jsonl` (the audit's findings; remediation updates the task files, never this file).
 **After:** Count findings with status != "completed" in current task files.
-If `findings.jsonl.bak` does not exist, note "Pre-remediation baseline not available."
+If `data/findings.jsonl` does not exist, note "Pre-remediation baseline not available."
 
 ## Flagged Items for Human Review
 
@@ -74,15 +74,11 @@ These tasks could not be resolved automatically and require human attention:
 
 ## Skipped Tasks
 
-[List EVERY skipped task with its reason. Do not summarize or aggregate.]
-
 | ID | File | Reason |
 |----|------|--------|
 | [id] | [file] | [notes field from JSON] |
 
 ## Failed Tasks
-
-[List EVERY failed task with its reason. Do not summarize or aggregate.]
 
 | ID | File | Reason |
 |----|------|--------|

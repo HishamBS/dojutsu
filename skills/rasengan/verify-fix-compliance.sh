@@ -4,7 +4,7 @@ set -euo pipefail
 # This script checks a SUBSET of engineering rules via grep patterns.
 # Covered: R05 (security), R07 (typing), R09 (clean code), R13 (magic numbers)
 # NOT covered (require semantic analysis): R01, R02, R03, R04, R08, R10, R11, R12, R14, R16
-# Uncovered rules are checked by: mini-rinnegan scan (--scope files) and /sharingan
+# Uncovered rules are checked by: mini-rinnegan scan (--scope files) and Sharingan (/sharingan)
 
 # Usage: verify-fix-compliance.sh <file_path> <stack>
 # Checks a single modified file against engineering rules.

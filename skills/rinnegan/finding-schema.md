@@ -38,7 +38,7 @@ Each finding is one JSON object per line in `findings.jsonl`:
 | Field | Required | Type | Description |
 |-------|----------|------|-------------|
 | `id` | Yes | string | `{PREFIX}-{NNN}` assigned during aggregation |
-| `rule` | Yes | string | Engineering rule ID (R01-R20) |
+| `rule` | Yes | string | Engineering rule ID, e.g. `R07` |
 | `severity` | Yes | enum | CRITICAL / HIGH / MEDIUM / LOW / REVIEW |
 | `category` | Yes | string | Category slug (see prefix mapping) |
 | `file` | Yes | string | Relative path from project root |
@@ -58,7 +58,7 @@ Each finding is one JSON object per line in `findings.jsonl`:
 | `layer` | Yes | string | Architectural layer this file belongs to (from inventory) |
 | `scanner` | Yes | string | Which scanner produced this finding |
 | `search_pattern` | Yes | string | Grep-able pattern that identifies this violation (e.g., "verify=False"). Used by Rasengan for stale-fix detection when line numbers shift. |
-| `severity_capped_from` | No | string | Set automatically by the validator when confidence-based severity capping reduced the original severity (e.g., `"CRITICAL"` when a low-confidence finding was capped to `"MEDIUM"`). Informational only — `create-phase-tasks.py:_transform_task` copies fields by explicit key enumeration and does NOT propagate this field to rasengan task JSON. Visible to operators reading raw `findings.jsonl`. |
+| `severity_capped_from` | No | string | Set automatically by the validator when confidence-based severity capping reduced the original severity (e.g., `"CRITICAL"` when a low-confidence finding was capped to `"MEDIUM"`). Informational only — `create-phase-tasks.ts:transformTask` copies fields by explicit key enumeration and does NOT propagate this field to rasengan task JSON. Visible to operators reading raw `findings.jsonl`. |
 | `cluster_id` | No | string | Deterministic cluster identifier assigned by Byakugan after clustering. Published findings must carry this once `deep/clusters.json` exists. |
 | `completed_at` | No | string | ISO timestamp when Rasengan resolved this task. Null until resolved. |
 | `resolution` | No | string | How Rasengan resolved: `applied` / `line-shifted` / `already_resolved` / `skipped` / `failed`. Null until resolved. |
@@ -78,13 +78,13 @@ Each finding is one JSON object per line in `findings.jsonl`:
 
 | Level | Definition | Examples |
 |-------|-----------|----------|
-| low | Single-line change, <15 min, no tests needed | Rename, add annotation, replace constant |
-| medium | 1-3 files, 15-60 min, may need test updates | Extract utility, add validation, refactor function |
-| high | 4+ files or architectural, >60 min, new abstractions | New service layer, auth redesign, DB schema change |
+| low | One line or block in one file, no test change | Rename, add annotation, replace constant |
+| medium | 1-3 files, may need test updates | Extract utility, add validation, refactor function |
+| high | 4+ files, architectural change, or new abstraction | New service layer, auth redesign, DB schema change |
 
 ## Fix Specification Policy
 
-Every finding MUST have EITHER `target_code` OR `fix_plan` populated. Both null = SCANNER FAILURE.
+After enrichment, every non-REVIEW finding has `target_code` or `fix_plan`; both null blocks phase generation (`BLOCKED_NULL_FIX` in `run-pipeline.ts`). Scanners may leave both empty; the enricher fills them.
 
 | Fix Complexity | Use | Example |
 |----------------|-----|---------|
@@ -112,7 +112,7 @@ Any non-zero count of non-REVIEW findings with BOTH fields null blocks phase gen
       "action": "edit",
       "file": "src/modules/auth/types.ts",
       "old_code": "interface UserType { id: string; name: string; email: string; }",
-      "new_code": "export { UserType } from '@/types/shared/user';",
+      "new_code": "export { UserType } from '@shared-types/user';",
       "description": "Replace duplicate definition with re-export from canonical source"
     },
     {
@@ -128,7 +128,7 @@ Any non-zero count of non-REVIEW findings with BOTH fields null blocks phase gen
 Step actions:
 - `create`: Create a new file with `code` content. Use Write tool.
 - `edit`: Replace `old_code` with `new_code` in `file`. Use Edit tool.
-- `delete`: Remove the file. Use Bash `rm`.
+- `delete`: never delete autonomously. Set the task to `status: "skipped"`, `resolution: "skipped"`, `notes: "delete needs operator approval: <path>"` so the rasengan report lists it (R28).
 - `move`: Move code from one file to another (combine with create+edit).
 
 ## Severity Levels
@@ -179,7 +179,7 @@ When a finding involves multiple rules, assign to the LOWEST phase number (fix t
 
 ## Finding to Task Transformation
 
-When `scripts/create-phase-tasks.py` creates `data/tasks/phase-N-tasks.json`, it transforms each finding from `findings.jsonl` as follows:
+When `scripts/create-phase-tasks.ts` creates `data/tasks/phase-N-tasks.json`, it transforms each finding from `findings.jsonl` as follows:
 
 | Finding Field | Task Field | Transformation |
 |---------------|------------|----------------|
@@ -195,6 +195,8 @@ When `scripts/create-phase-tasks.py` creates `data/tasks/phase-N-tasks.json`, it
 | `explanation` | `explanation` | Direct copy |
 | `effort` | `effort` | Direct copy |
 | `fix_plan` | `fix_plan` | Direct copy (array of step objects, may be null) |
+| `confidence` | `confidence` | Lower-cased copy; `high` when absent (rasengan sends `low` to human review) |
+| `confidence_reason` | `confidence_reason` | Direct copy |
 | `cross_cutting_group` | — | Do not copy to tasks. This field stays on published findings only. |
 | — | `status` | Initialize to `"pending"` |
 | — | `completed_at` | Initialize to `null` |
@@ -214,7 +216,7 @@ The verification command must check that NO violations of that phase's rule set 
 
 | Phase | Rule | Verification Command Pattern |
 |-------|------|------------------------------|
-| 0 | R14 | Build/compile command for the stack (e.g., `python3 -m py_compile app/**/*.py`) |
+| 0 | R14 | Build/compile command for the stack (e.g., `uv run python -m compileall -q .`) |
 | 1 | R05 | `grep -rn 'verify=False\|eval(\|exec(\|shell=True' app/ \| wc -l` expecting `0` |
 | 2 | R07 | Stack-specific type check (e.g., `grep -rn '\bAny\b' app/ --include='*.py' \| grep -v import \| wc -l`) |
 | 3 | R01 | Manual review — set command to `echo MANUAL_REVIEW_REQUIRED` |
@@ -246,11 +248,13 @@ For phases with `MANUAL_REVIEW_REQUIRED`, the verification is advisory. Rasengan
 
 ## ID Assignment Algorithm
 
-During aggregation:
-1. Sort findings by (phase, file, line)
-2. Within each category, assign sequential IDs: SEC-001, SEC-002, ...
-3. Cross-cutting findings that appear in 3+ files get a special tag: `"cross_cutting": true`
-4. Deduplicate: if two scanners report same file:line, keep the one with higher severity
+Aggregation runs in code (`scripts/aggregate_findings.ts`), in this order:
+1. Deduplicate: findings with the same file, line, AND rule collapse to the highest severity, then the longer explanation, crediting every scanner; different rules at the same line stay separate
+2. Merge restatements: same rule and file, lines within 5, descriptions sharing 4+ words, AND the same `search_pattern`. A different pattern is a different violation, so both stay
+3. Set `layer` from `inventory.json`
+4. Sort findings by (phase, file, line, rule, description), then within each category prefix assign sequential IDs: SEC-001, SEC-002, ...
+
+Cross-cutting findings that appear in 3+ files get `"cross_cutting": true` later, when `merge-enriched.ts` runs `detect_cross_cutting.ts`.
 
 ## JSON Task File Format
 
@@ -324,12 +328,11 @@ Task status values: `pending` | `in_progress` | `completed` | `blocked` | `skipp
 {
   "stack": "python",
   "framework": "fastapi",
-  "framework_version": "3.0",
   "project": "orchestrator"
 }
 ```
 
-`config.json` is metadata-only. Aggregate counts, readiness, layer totals, and phase totals belong exclusively in `audit-stats.json`.
+The aggregation step copies these from `inventory.json` (`project` is its `root`). `config.json` is metadata-only. Aggregate counts, readiness, layer totals, and phase totals belong exclusively in `audit-stats.json`.
 
 ## inventory.json Schema
 

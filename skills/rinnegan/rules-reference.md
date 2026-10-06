@@ -1,6 +1,6 @@
 # Engineering Rules Reference — Rinnegan Audit Skill
 
-Cross-language detection patterns for 15 auditable rules.
+Cross-language detection patterns for 14 auditable rules (R01-R16 subset).
 Each rule includes a definition, grep patterns, per-language red flags,
 severity guidelines, and the remediation phase it maps to.
 
@@ -729,7 +729,7 @@ All findings for this rule are HIGH confidence by default. The rule's violation 
 | Inline timeouts/retry counts in production code | MEDIUM |
 | Inline regex patterns used in 2+ places | MEDIUM |
 | Array slices with magic numbers | MEDIUM |
-| Pixel values instead of design tokens | LOW |
+| Pixel values instead of design tokens | LOW; MEDIUM when the repo root has a `DESIGN.md` (its lane's relative-units rule bans px) |
 | Numeric literals in test setup | LOW |
 
 ### Confidence Criteria
@@ -897,3 +897,52 @@ Use this matrix when a finding could fall into multiple severity levels.
 | Phase 8 | Refactoring | R10 | Remove deprecated, no mixed old/new patterns |
 | Phase 9 | Verification | R16, R08 | Full-stack type agreement, CI/CD gates |
 | Phase 10 | Documentation | R11 | READMEs, ADRs, API docs current |
+
+---
+
+## A-Series — Rinnegan-Local Detections
+
+These are rinnegan-specific semantic detections that have no corresponding numbered
+SSOT engineering rule in CODING_RULES.md. They are **LLM-only** — the grep scanner does not
+emit them. IDs use the `A`-prefix to prevent collision with the SSOT R-series.
+
+Rules outside the 14 above are not scanned by rinnegan: they are process rules, or
+rules enforced per project by lint and hooks (for example R20 aliases, R21 barrels).
+
+### A01 — Template-Shaped Code
+
+**Definition.** Code shaped like a filled-in template rather than purpose-written
+code: over-scaffolded structure, uniform boilerplate comments, suspicious
+consistency across files, or placeholder patterns. A finding names the defect (the
+boilerplate block, the copy-pasted handler, the logic-free stub) and never
+speculates about who or what wrote the code.
+
+**Detection.** LLM-only. Look for: uniform comment blocks that describe what the
+code does rather than why; identical error-handling patterns copy-pasted across
+files; class/function names that mirror a task description ("CreateUserHandler",
+"ProcessOrderService") with no evident domain motivation; suspiciously complete
+stubs that compile but have no real logic.
+
+**Confidence.** HIGH when 3+ signals appear together. MEDIUM for 2 signals. LOW
+for isolated signals.
+
+### A02 — Silent Catch / Swallowed Errors
+
+**Definition.** A `catch`/`except`/`rescue` block that neither logs the error,
+rethrows it, nor handles it in any observable way — the exception is silently
+swallowed. This hides failures and turns known errors into silent corruption.
+Mirrors ENGINEERING_NORMS anti-pattern 3.1 ("Swallowing exceptions").
+
+Note: the grep scanner tags empty `catch {}` / `except: pass` blocks as **R14**
+(Clean Build) for deterministic detection. A02 is the LLM-only *semantic* variant
+that catches cases where the block is syntactically non-empty but still effectively
+swallows the error (e.g. `catch (e) { return null; }` with no log).
+
+**Detection.** LLM-only. Patterns: `catch { return undefined; }`,
+`except: pass`, `rescue => nil`, `catch (e) { /* ignored */ }`,
+`catch (err) { return defaultValue; }` with no logging, error counting, or
+structured propagation.
+
+**Confidence.** HIGH when the block is completely empty or contains only a
+comment/return-default. MEDIUM when it logs to a non-standard channel. LOW when
+context is ambiguous (e.g. intentional fallback with a clear domain reason).

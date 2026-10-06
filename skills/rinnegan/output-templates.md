@@ -1,26 +1,6 @@
 # Output Templates
 
-Exact structure for every deliverable rinnegan generates. All placeholders use `{{PLACEHOLDER}}` syntax. Generators MUST follow these structures — do not invent new sections or reorder.
-
----
-
-## Output Size Requirements (Non-Negotiable)
-
-| Deliverable | Minimum Size |
-|-------------|-------------|
-| master-audit.md | 300-500 lines (navigation hub only) |
-| Sum of all layers/*.md | >= 20 lines per KLOC |
-| cross-cutting.md | >= 50 lines per cross-cutting group |
-| Phase files collectively | >= 10 lines per finding |
-
-**Layer docs are the primary source of finding detail. master-audit.md links to them but does NOT duplicate findings.**
-
-Examples:
-- A 20K LOC codebase -> sum of all layer docs >= 400 lines
-- An 80K LOC codebase -> sum of all layer docs >= 1,600 lines
-- master-audit.md is always 300-500 lines regardless of codebase size
-
-Output below these thresholds = generation INCOMPLETE. The layer generators must continue writing until the minimum is met.
+Reference structure for rinnegan's deliverables. Published docs are rendered by `scripts/bundle_renderer.ts` from the SSOT data files; where this file and the renderer disagree, the renderer wins (SKILL.md Publication Contract). Sections 5-6 are the live data contracts for `rasengan-config.json` and `rasengan-state.json`.
 
 ---
 
@@ -174,8 +154,6 @@ One file per architectural layer, generated in parallel. Each layer doc contains
 ```
 ```
 
-**Per-layer minimum:** >= 20 * (layer_loc / 1000) lines. If shorter, you have not provided enough detail per finding.
-
 ---
 
 ## 1c. cross-cutting.md
@@ -207,8 +185,6 @@ Covers violation patterns spanning multiple layers.
 
 [Repeat for every cross-cutting group]
 ```
-
-**Minimum:** >= 50 lines per cross-cutting group.
 
 ---
 
@@ -387,121 +363,7 @@ Run this command from the project root after completing all tasks in this phase.
 
 ## 4. agent-instructions.md
 
-```markdown
-# Agent Instructions: Consuming the Audit
-
-This document explains how coding agents (Claude Code, Codex, Cursor, etc.) should consume and execute the structured audit output.
-
-## Directory Layout
-
-```
-docs/audit/
-  master-audit.md            -- Full human-readable audit (reference only)
-  progress.md                -- Track completion across phases
-  agent-instructions.md      -- This file
-  phases/                    -- Human-readable phase task lists
-    phase-0-foundation.md
-    phase-1-security.md
-    ...
-  data/                      -- Machine-readable structured data
-    findings.jsonl           -- All findings as JSONL
-    inventory.json           -- File tree with LOC counts
-    phase-dag.json           -- Phase dependency graph
-    config.json              -- Audit metadata
-  data/tasks/                -- Per-phase task arrays (primary agent input)
-    phase-0-tasks.json
-    phase-1-tasks.json
-    ...
-```
-
-## Execution Protocol
-
-### Step 1: Determine Current Phase
-
-Read `data/phase-dag.json` and `progress.md` to find the lowest-numbered phase with status `NOT STARTED`. Phases with status `BLOCKED` cannot be started until their prerequisites are `COMPLETE`.
-
-### Step 2: Load Phase Tasks
-
-Read the JSON task file for the current phase:
-```
-data/tasks/phase-{{N}}-tasks.json
-```
-
-Parse the `tasks` array. Each task object contains all information needed to apply the fix.
-
-### Step 3: Execute Each Task
-
-For each task in the `tasks` array (process in order):
-
-1. **Read the file** at `task.file`, focusing on `task.line`
-2. **Verify the current code** matches `task.current_code`
-   - If it matches: apply `task.target_code` as the replacement
-   - If it does NOT match: the code has changed since the audit. Set `task.status` to `"blocked"` and add a `"blocked_reason"` field explaining the mismatch. Flag for human review. Do NOT guess.
-3. **Add imports** listed in `task.imports_needed` (if present) at the top of the file, respecting existing import order
-4. **Update task status** in the JSON file: set `task.status` to `"completed"`
-5. **Increment** the `completed` count in the phase object
-
-### Step 4: Run Verification
-
-After all tasks in the phase are complete (or blocked):
-
-1. Run the command in `verification.command`
-2. Compare output to `verification.expected`
-3. If verification passes: set `phase.status` to `"complete"` in the JSON
-4. If verification fails: review blocked/skipped tasks — they likely explain the gap
-
-### Step 5: Update Progress
-
-1. Update `progress.md` with the new phase status
-2. Check if downstream phases are now unblocked
-3. Return to Step 1 for the next phase
-
-## Rules for Agents
-
-1. **Work one phase at a time.** Never skip ahead. The DAG exists for a reason: later fixes depend on earlier ones being stable.
-
-2. **Read before writing.** Always Read the target file and verify the line content matches `current_code` before applying any change. Stale line numbers are the most common failure mode.
-
-3. **Do not invent fixes.** If `target_code` is provided, use it exactly. If `target_code` is null, the finding requires human judgment — set status to `"blocked"` and move on.
-
-4. **Preserve surrounding code.** Replace only the lines indicated. Do not reformat, reorder imports globally, or "clean up" nearby code. That work belongs to its own finding in a later phase.
-
-5. **Commit per phase.** After completing a phase, commit all changes with a message like: `fix(phase-N): [phase name] remediation`. This makes rollback granular.
-
-6. **Run verification before moving on.** The verification command is the source of truth for phase completion, not the task checklist.
-
-7. **Flag mismatches, never force.** If the code at a given line does not match `current_code`, the file was modified after the audit. Do not attempt to pattern-match or apply the fix elsewhere. Flag it and move on.
-
-8. **Update the JSON.** The JSON task files are the machine-readable state. Always update `status` fields as you work. Other agents and dashboards may read these files.
-
-## Status Values
-
-| Status | Meaning |
-|--------|---------|
-| `not_started` | Phase/task has not been touched |
-| `in_progress` | Phase has some completed tasks but is not done |
-| `completed` | All tasks done and verification passed |
-| `blocked` | Cannot proceed (prerequisite incomplete or code mismatch) |
-| `skipped` | Intentionally skipped (with documented reason) |
-
-## Error Recovery
-
-If an agent encounters an unexpected state:
-
-1. **JSON parse error in task file:** Re-read the file. If corrupted, regenerate from `findings.jsonl` filtered by phase number.
-2. **File not found:** The file may have been renamed or deleted. Set task to `blocked` with reason `"file_not_found"`.
-3. **Verification command fails to run:** Check that you are in the project root directory. The commands assume `cwd` is the repo root.
-4. **Multiple tasks on the same line:** Apply them in ID order (lowest ID first). After each application, re-read the file as line numbers may shift.
-5. **Circular dependency detected:** This should not happen with the standard DAG. If it does, report it as a bug in the audit generation.
-
-**Error Recovery Scenarios:**
-
-6. **Line numbers shifted after applying earlier tasks in the same file:** Apply tasks in descending line-number order (highest first). If you cannot reorder due to dependencies, re-read the file after each edit to get current line numbers.
-
-7. **Verification passes but tasks are still blocked:** The verification command is too loose. Report this as an audit bug — the verification command needs updating. Do NOT mark the phase complete.
-
-8. **`target_code` references a function/file that does not exist yet:** Check if another task in the SAME phase creates it. If so, apply the creation task first. If the dependency is in a DIFFERENT phase, the finding was assigned to the wrong phase — flag as phase assignment bug.
-```
+Rendered by `renderAgentInstructions` (`scripts/report-renderers/audit.ts`): the SSOT file list plus the must-fix finding IDs.
 
 ---
 
@@ -515,8 +377,8 @@ Generated by rinnegan in `data/rasengan-config.json`. Controls how Rasengan exec
   "session_bridging": "json",
   "stale_fix_mode": "adapt",
   "mini_scan_after_phase": true,
-  "sharingan_after_phase": false,
-  "sharingan_after_all": true,
+  "full_verify_after_phase": false,
+  "full_verify_after_all": true,
   "max_retries_per_phase": 2,
   "max_retries_per_task": 1
 }
@@ -530,8 +392,8 @@ Generated by rinnegan in `data/rasengan-config.json`. Controls how Rasengan exec
 | `session_bridging` | string | `json` (task status persisted to JSON after each task). Always `json`. |
 | `stale_fix_mode` | string | `adapt` (5-step search for shifted violations) or `strict` (exact line match only). Default: `adapt`. |
 | `mini_scan_after_phase` | bool | Run `/rinnegan --scope files` on modified files after each phase to catch new violations. Default: `true`. |
-| `sharingan_after_phase` | bool | Run `/sharingan` after each phase. Default: `false` (expensive). |
-| `sharingan_after_all` | bool | Run `/sharingan` after all phases complete. Default: `true`. |
+| `full_verify_after_phase` | bool | Run Sharingan (`/sharingan`) after each phase. Default: `false` (expensive). |
+| `full_verify_after_all` | bool | Run Sharingan (`/sharingan`) after all phases complete. Default: `true`. |
 | `max_retries_per_phase` | int | Max retry attempts for phase verification failures. Default: `2`. |
 | `max_retries_per_task` | int | Max retry attempts for a single task fix failure. Default: `1`. |
 
@@ -546,6 +408,7 @@ Created by Rasengan at runtime in `data/rasengan-state.json`. Tracks session-lev
   "current_phase": 2,
   "current_task_id": "TYP-015",
   "phases_completed": [0, 1],
+  "phases_pending": [2, 3],
   "total_tasks": 176,
   "tasks_resolved": 42,
   "tasks_skipped": 3,
@@ -564,6 +427,7 @@ Created by Rasengan at runtime in `data/rasengan-state.json`. Tracks session-lev
 | `current_phase` | int | Phase currently being executed. |
 | `current_task_id` | string | Last task that was in progress or completed. |
 | `phases_completed` | array | List of phase numbers fully completed. |
+| `phases_pending` | array | Phase numbers with at least one pending task. Dojutsu opens the first one its `--phases` filter selects. |
 | `total_tasks` | int | Total task count across all phases. |
 | `tasks_resolved` | int | Tasks with resolution `applied`, `line-shifted`, or `already_resolved`. |
 | `tasks_skipped` | int | Tasks with resolution `skipped`. |

@@ -38,30 +38,30 @@ print_step() { printf "  ${CYAN}=>  ${RESET}%s\n" "$1"; }
 print_warn() { printf "  ${YELLOW} !  ${RESET}%s\n" "$1"; }
 
 MISSING_BREW=()
-MISSING_NPM=()
-MISSING_PIPX=()
+MISSING_BUN=()
+MISSING_UV=()
 
 # ---------------------------------------------------------------------------
 # Tool registry: name | check command | install method | install target | description
 # ---------------------------------------------------------------------------
 TOOLS=(
     # -- Universal (all stacks) --
-    "semgrep|semgrep --version|pipx|semgrep|SAST scanner (security, bugs)"
+    "semgrep|semgrep --version|uv|semgrep|SAST scanner (security, bugs)"
     "gitleaks|gitleaks version|brew|gitleaks|Secrets scanner (API keys, tokens)"
-    "jscpd|jscpd --version|npm|jscpd|Code duplication detector"
+    "jscpd|jscpd --version|bun|jscpd|Code duplication detector"
 
     # -- TypeScript/JavaScript --
-    "eslint|eslint --version|npm|eslint|JS/TS linter"
-    "typescript|tsc --version|npm|typescript|TypeScript compiler (type checking)"
-    "knip|knip --version|npm|knip|Dead exports and unused code detector"
-    "madge|madge --version|npm|madge|Circular dependency detector"
+    "eslint|eslint --version|bun|eslint|JS/TS linter"
+    "typescript|tsc --version|bun|typescript|TypeScript compiler (type checking)"
+    "knip|knip --version|bun|knip|Dead exports and unused code detector"
+    "madge|madge --version|bun|madge|Circular dependency detector"
 
     # -- Python --
-    "ruff|ruff --version|pipx|ruff|Python linter (replaces flake8/pylint)"
-    "mypy|mypy --version|pipx|mypy|Python type checker"
-    "radon|radon --version|pipx|radon|Python complexity analyzer"
-    "vulture|vulture --version|pipx|vulture|Python dead code detector"
-    "pip-audit|pip-audit --version|pipx|pip-audit|Python dependency vulnerability scanner"
+    "ruff|ruff --version|uv|ruff|Python linter (replaces flake8/pylint)"
+    "mypy|mypy --version|uv|mypy|Python type checker"
+    "radon|radon --version|uv|radon|Python complexity analyzer"
+    "vulture|vulture --version|uv|vulture|Python dead code detector"
+    "pip-audit|pip-audit --version|uv|pip-audit|Python dependency vulnerability scanner"
 )
 
 # ---------------------------------------------------------------------------
@@ -83,15 +83,15 @@ for entry in "${TOOLS[@]}"; do
         print_miss "$name" "$desc"
         case "$method" in
             brew) MISSING_BREW+=("$target") ;;
-            npm)  MISSING_NPM+=("$target") ;;
-            pipx) MISSING_PIPX+=("$target") ;;
+            bun)  MISSING_BUN+=("$target") ;;
+            uv)   MISSING_UV+=("$target") ;;
         esac
     fi
 done
 
 printf "\n  ${BOLD}Result: ${FOUND}/${TOTAL} tools available${RESET}\n"
 
-MISSING_TOTAL=$(( ${#MISSING_BREW[@]} + ${#MISSING_NPM[@]} + ${#MISSING_PIPX[@]} ))
+MISSING_TOTAL=$(( ${#MISSING_BREW[@]} + ${#MISSING_BUN[@]} + ${#MISSING_UV[@]} ))
 
 if [ "$MISSING_TOTAL" -eq 0 ]; then
     printf "  ${GREEN}All tools installed. Pipeline will run at full capacity.${RESET}\n\n"
@@ -130,30 +130,25 @@ if [ ${#MISSING_BREW[@]} -gt 0 ]; then
     fi
 fi
 
-# npm global tools
-if [ ${#MISSING_NPM[@]} -gt 0 ]; then
-    if command -v npm &>/dev/null; then
-        print_step "Installing via npm: ${MISSING_NPM[*]}"
-        npm install -g "${MISSING_NPM[@]}" 2>&1 | tail -3
+# bun global tools (bun is the only JS/TS package manager)
+if [ ${#MISSING_BUN[@]} -gt 0 ]; then
+    if command -v bun &>/dev/null; then
+        print_step "Installing via bun: ${MISSING_BUN[*]}"
+        bun install -g "${MISSING_BUN[@]}" 2>&1 | tail -3
     else
-        print_warn "npm not found. Install Node.js first: https://nodejs.org"
-        print_warn "  Then: npm install -g ${MISSING_NPM[*]}"
+        print_warn "bun not found. Install it (https://bun.sh), then: bun install -g ${MISSING_BUN[*]}"
     fi
 fi
 
-# pipx tools (isolated Python)
-if [ ${#MISSING_PIPX[@]} -gt 0 ]; then
-    if command -v pipx &>/dev/null; then
-        for pkg in "${MISSING_PIPX[@]}"; do
-            print_step "Installing via pipx: $pkg"
-            pipx install "$pkg" 2>&1 | tail -1
+# uv tools (isolated Python; uv is the only Python package manager)
+if [ ${#MISSING_UV[@]} -gt 0 ]; then
+    if command -v uv &>/dev/null; then
+        for pkg in "${MISSING_UV[@]}"; do
+            print_step "Installing via uv: $pkg"
+            uv tool install "$pkg" 2>&1 | tail -1
         done
-    elif command -v pip3 &>/dev/null; then
-        print_warn "pipx not found. Using pip3 instead (less isolated)."
-        print_step "Installing via pip3: ${MISSING_PIPX[*]}"
-        pip3 install --user "${MISSING_PIPX[@]}" 2>&1 | tail -3
     else
-        print_warn "Neither pipx nor pip3 found. Install these manually: ${MISSING_PIPX[*]}"
+        print_warn "uv not found. Install it (https://docs.astral.sh/uv/), then: uv tool install <tool> for each of: ${MISSING_UV[*]}"
     fi
 fi
 

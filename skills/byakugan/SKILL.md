@@ -1,6 +1,7 @@
 ---
 name: byakugan
-description: Deep codebase analysis — dependency tracing, blast radius, impact narratives, compliance scorecards. Run after rinnegan to get v5-quality audit depth.
+description: Use after a Rinnegan audit when findings need dependency tracing,
+  blast-radius analysis, impact narratives, or compliance scorecards.
 ---
 
 # Byakugan — Deep Codebase Analysis
@@ -9,7 +10,7 @@ The eye that sees connections. Traces dependencies, analyzes blast radius, and p
 
 ## How It Works
 
-1. **Run the pipeline script.** Run: `python3 $SKILL_DIR/scripts/run-pipeline.py $PROJECT_DIR`
+1. **Run the pipeline script.** Run: `bun $SKILL_DIR/scripts/run-pipeline.ts $PROJECT_DIR`
    The script auto-builds the dependency graph and clusters findings (deterministic, <10 seconds), then tells you what to do next.
 
 2. **Execute the ACTION it outputs.** Dispatch only the impact analysis agents the pipeline requests. Final published deep-analysis docs are rendered deterministically from SSOT inputs and validated before completion.

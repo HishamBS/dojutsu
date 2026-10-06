@@ -7,6 +7,10 @@ set -euo pipefail
 
 AUDIT_DIR="${1:?Usage: verify-coverage.sh <audit_dir> <source_dir>}"
 SOURCE_DIR="${2:?Usage: verify-coverage.sh <audit_dir> <source_dir>}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUN_BIN="$(command -v bun 2>/dev/null || true)"
+[[ -n "$BUN_BIN" ]] || { echo "verify-coverage.sh: bun is required -- install it from https://bun.sh, then re-run" >&2; exit 1; }
+helper() { "$BUN_BIN" "$SCRIPT_DIR/scripts/helper-cli.ts" "$@"; }
 
 [[ -d "$AUDIT_DIR" ]] || { echo "FAIL: audit directory not found: $AUDIT_DIR"; exit 1; }
 [[ -d "$SOURCE_DIR" ]] || { echo "FAIL: source directory not found: $SOURCE_DIR"; exit 1; }
@@ -25,10 +29,10 @@ FINDINGS="$AUDIT_DIR/data/findings.jsonl"
 
 # --- Inventory file count vs actual files on disk ---
 if [[ -f "$INVENTORY" ]]; then
-  INV_COUNT=$(python3 -c "import json; print(json.load(open('$INVENTORY'))['total_files'])" 2>/dev/null || echo "0")
+  INV_COUNT=$(helper inventory-count "$INVENTORY" 2>/dev/null || echo "0")
 
   # Count actual source files (detect stack from inventory)
-  STACK=$(python3 -c "import json; print(json.load(open('$INVENTORY')).get('stack','unknown'))" 2>/dev/null || echo "unknown")
+  STACK=$(helper inventory-stack "$INVENTORY" 2>/dev/null || echo "unknown")
 
   case "$STACK" in
     python)  ACTUAL=$(find "$SOURCE_DIR" -name '*.py' -not -path '*/node_modules/*' -not -path '*/.venv/*' -not -path '*/venv/*' | wc -l | tr -d ' ') ;;
@@ -50,12 +54,7 @@ fi
 
 # --- Every layer in inventory has a layer doc ---
 if [[ -f "$INVENTORY" ]]; then
-  LAYERS=$(python3 -c "
-import json
-inv = json.load(open('$INVENTORY'))
-for layer in inv.get('layers', {}).keys():
-    print(layer)
-" 2>/dev/null)
+  LAYERS=$(helper inventory-layers "$INVENTORY" 2>/dev/null)
 
   while IFS= read -r layer; do
     [[ -z "$layer" ]] && continue
@@ -71,17 +70,7 @@ fi
 
 # --- Findings reference real files ---
 if [[ -f "$FINDINGS" ]]; then
-  UNIQUE_FILES=$(python3 -c "
-import json
-files = set()
-with open('$FINDINGS') as f:
-    for line in f:
-        try:
-            d = json.loads(line.strip())
-            files.add(d.get('file',''))
-        except: pass
-print(len(files))
-" 2>/dev/null || echo "0")
+  UNIQUE_FILES=$(helper findings-unique-files "$FINDINGS" 2>/dev/null || echo "0")
   pass "findings reference $UNIQUE_FILES unique files"
 fi
 

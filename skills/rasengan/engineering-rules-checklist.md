@@ -10,10 +10,10 @@ After applying a fix, check every applicable rule below. The "Check" column desc
 
 | Rule | Name | Check After Fix | How |
 |------|------|-----------------|-----|
-| R01 | SSOT/DRY | Did the fix introduce duplication? | Grep for the new code pattern in other files. If the same logic now exists in 2+ places, extract to a shared utility. |
+| R01 | SSOT & DRY | Did the fix introduce duplication? | Grep for the new code pattern in other files. If the same logic now exists in 2+ places, extract to a shared utility. |
 | R02 | Separation of Concerns | Did the fix mix concerns? | Verify the modified file stays in its architectural layer. A service file should not import UI components. A route file should not contain business logic. |
 | R03 | Mirror Architecture | Does the fix match existing patterns? | Check: naming conventions match neighbors, import style matches file, indentation matches, error handling pattern matches existing code in the same module. |
-| R04 | Performance | Did the fix add unnecessary complexity? | Check for new N+1 patterns, unnecessary loops, missing memoization (React), or vectorization opportunities (Python). |
+| R04 | Performance First | Did the fix add unnecessary complexity? | Check for new N+1 patterns, unnecessary loops, missing memoization (React), or vectorization opportunities (Python). |
 | R05 | Security | Did the fix introduce security issues? | Grep for: hardcoded secrets, `eval()`, `exec()`, unsanitized user input, `dangerouslySetInnerHTML`, `verify=False`, `shell=True`. |
 | R07 | Strict Typing | Does the fix have proper types? | Grep for `any`/`Any`/`Object`/`!` in modified lines. All function parameters and return types must be annotated. |
 | R08 | Build/Test Gate | Does the fix compile and pass tests? | Run the relevant build/lint command for the stack after completing the phase. |
@@ -24,6 +24,8 @@ After applying a fix, check every applicable rule below. The "Check" column desc
 | R13 | No Magic Numbers | Does the fix use constants? | No inline numeric literals, no hardcoded string values. Extract to named constants or SSOT config. |
 | R14 | Clean Build | Does the fix compile/lint? | The modified file must pass the stack's linter and type-checker individually. |
 | R16 | Full Stack Verification | Are all layers consistent? | If the fix touches an API contract (route, type, schema), verify that all consuming layers are updated. |
+| R20 | Alias Imports | Does the fix use correct import paths? | No `../` parent-relative imports, no `@/*` catch-all alias. All cross-directory imports use semantically-named tsconfig `paths` aliases. |
+| R21 | Barrels Outside-Only | Are barrels used correctly? | No same-domain barrel imports — use deep imports within a domain. Check for new circular imports: run `madge --circular` or equivalent. |
 
 ---
 
@@ -34,11 +36,13 @@ These rules govern workflow and process. Rasengan cannot detect or fix them via 
 | Rule | Name | What It Governs | How Rasengan Respects It |
 |------|------|-----------------|--------------------------|
 | R06 | Plan -> Approve -> Audit | Workflow: propose, get approval, implement, self-audit | Rasengan follows the plan from rinnegan. Each phase is verified before proceeding. |
-| R15 | No Estimates | Never provide time/effort estimates | Rasengan does not estimate remaining time. It reports task counts only. |
-| R17 | Validate Logging | Call validation scripts before claiming completion | Rasengan calls verify-phase.sh and verify-fix-compliance.sh. |
+| R15 | No Estimates | Never estimate time or duration; size work in countable units (files, commands, steps, call sites) | Rasengan does not estimate remaining time. It reports task counts only. |
+| R17 | Validate Logging | Every commit has a Tier-1 log entry before completion is claimed | `fix(phase-N)` commits go through the normal commit path, so the Tier-1 hook logs them; rasengan never bypasses hooks. |
 | R18 | Never Mention AI | No AI attribution in commits, code, or comments | Rasengan commit messages use `fix(phase-N):` format with no agent attribution. |
 | R19 | Spec Verification | Verify every requirement before claiming complete | Rasengan verifies each task via self-check and phase verification command. |
-| R20 | Verification Before Parallelism | Independent verification of each agent output | Rasengan executes sequentially (no subagents). Each task verified individually. |
+| R22 | Semantic Code Search | Use semble for exploratory lookups | Rasengan uses semble search for file discovery; grep for exact-literal confirmation only. |
+| R23 | Plan-Mode Discipline | Non-trivial tasks start in plan mode | Rasengan operates post-plan; the executor must have produced a TaskCreate tasklist before exiting plan mode. |
+| R24 | Superpowers Skill Gates | Were required skills invoked at each phase gate? | Check against the R24 trigger map in CODING_RULES.md (the map lives there only). |
 
 These rules are satisfied by the rasengan pipeline design itself, not by per-fix checks.
 
@@ -152,9 +156,9 @@ ruff check "$FILE"
 ### TypeScript
 ```bash
 # Type check (project-level, checks modified files)
-npx tsc --noEmit
+bunx tsc --noEmit
 # Lint modified files
-npx eslint "$FILE"
+bunx eslint "$FILE"
 ```
 
 ### Java
@@ -164,3 +168,59 @@ mvn compile -pl "$MODULE" -q
 # Lint
 mvn checkstyle:check -pl "$MODULE" -q
 ```
+
+---
+
+## Engineering Rules Reference
+
+*Generated from `rules.json` by `render-rules.ts` — do not hand-edit this section.*
+
+<!-- RULES:START -->
+### Code Quality
+**R01** — SSOT & DRY
+**R02** — Separation of Concerns
+**R03** — Mirror Architecture
+**R04** — Performance First
+**R07** — Strict Typing
+**R09** — Clean Code
+**R10** — Whole-System Refactors
+**R12** — Real Data
+**R13** — No Magic Numbers
+**R14** — Clean Build
+**R20** — Alias Imports, No Parent-Relative, No Catch-All
+**R21** — Barrels Are Outside-Only, No Cycles
+**R25** — Test Quality Bar
+**R30** — Simplicity First
+**R31** — Surgical Changes
+**R34** — Mark Intentional Simplifications
+
+### Process
+**R06** — Plan -> Approve -> Audit
+**R08** — Build/Test Gate
+**R11** — Documentation
+**R15** — No Estimates
+**R16** — Full Stack Verification
+**R17** — Validate Logging
+**R19** — Spec Verification Before Completion
+**R22** — Semantic Code Search
+**R23** — Plan-Mode Discipline
+**R24** — Superpowers Skill Gates
+**R26** — Pre-Large-Change Reflection Checkpoint
+**R27** — Architect-Facing Decision Request Protocol
+**R29** — Web Access - Match the Task to the Tool
+**R32** — Goal-Driven Execution
+**R33** — Sole Package Managers
+**R35** — Commit Cadence
+**R36** — Claim Provenance & Honest Uncertainty
+**R37** — Outcome-First Delivery
+**R38** — Impeccable UX Governing Layer
+**R39** — Downstream Fault Triage
+**R40** — ADHD Output Shape
+**R41** — Orchestrator Model Tiering
+**R42** — Artifact Deliverables Skip Software Process
+
+### Safety
+**R05** — Security
+**R18** — Never Mention AI
+**R28** — No Destructive Delete Without Approval
+<!-- RULES:END -->

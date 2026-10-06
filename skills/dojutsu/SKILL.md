@@ -1,39 +1,38 @@
 ---
 name: dojutsu
-description: Full automated pipeline -- audit, analyze, fix, verify. Session-resilient, agent-agnostic, HMAC-signed state machine. Chains rinnegan (detect), byakugan (analyze), rasengan (fix), sharingan (verify). Run on any project for complete quality remediation.
+description: Full automated pipeline -- audit, analyze, fix, verify.
+  Session-resilient, agent-agnostic, HMAC-signed state machine. Chains rinnegan
+  (detect), byakugan (analyze), rasengan (fix), sharingan (verify). Run on any
+  project for complete quality remediation.
 ---
 
 # Dojutsu -- Unified Codebase Quality Pipeline
 
 ## Core Principle
 
-**"The pipeline script is the only authority. Never improvise."**
+The pipeline script is the only authority: all state lives on disk and is HMAC-signed, so only the script advances it.
 
 Dojutsu is a session-resilient, agent-agnostic orchestrator that chains four specialized eyes in strict sequence: rinnegan detects violations, byakugan analyzes dependencies and impact, rasengan fixes findings, sharingan verifies fixes. All state lives on disk with HMAC-signed integrity. Any coding agent (Claude, Codex, OpenCode, Gemini) can run or resume any pipeline at any point.
 
 ---
 
-## HARD RULES
+## Operating Rules
 
-These are non-negotiable. Violating any rule corrupts pipeline state or produces incorrect results.
+1. **Drive it with the script.** Run `bun $SKILL_DIR/scripts/run-pipeline.ts $PROJECT_DIR`, do the ACTION it prints, and run it again until it prints COMPLETE. Produce artifacts only through the scripts it names (rinnegan's script for a rinnegan step, and so on); the pipeline cannot validate a hand-written substitute.
 
-1. **Pipeline script is the sole orchestrator.** Always run `python3 $SKILL_DIR/scripts/run-pipeline.py $PROJECT_DIR` first. Execute only the ACTION it outputs. Run it again. Repeat until COMPLETE. Never skip steps, never improvise, never write your own scripts to generate artifacts.
+2. **Re-read state from disk.** Start every session by running the script (or `--status`) instead of continuing from memory of an earlier session; the disk is authoritative.
 
-2. **Never write inline scripts to generate artifacts.** The pipeline handles all file creation. If the pipeline says "run rinnegan", delegate to rinnegan's script, not a hand-rolled substitute.
+3. **Leave the state file to the pipeline.** It signs every state change, so a hand edit to `dojutsu-state.json` fails the HMAC check.
 
-3. **Never continue from memory of a previous session.** Always run `--status` or the pipeline script to re-establish truth from disk. Memory-based continuation causes drift and state corruption.
+4. **Confidence routing.** HIGH and MEDIUM findings are fixed as instructed; LOW findings go to the human for review.
 
-4. **HMAC-signed state is immutable by hand.** Never edit `dojutsu-state.json` directly. The pipeline signs every state change. Manual edits trigger HMAC mismatch errors.
+5. **Budget pauses.** When the pipeline pauses on `session_token_budget`, start a new session and run it again (or `--resume`).
 
-5. **Confidence routing is enforced.** HIGH and MEDIUM findings are auto-fixed. LOW findings pause for human review. Do not override this. Do not auto-fix LOW findings.
+6. **Git checkpoints.** The pipeline tags every stage transition (`dojutsu/*`). Those tags are the rollback points, so keep them for the length of the run.
 
-6. **Budget enforcement is automatic.** When token usage exceeds `session_token_budget` in dojutsu.toml, the pipeline auto-pauses. Start a new session and run with `--resume` or just run the pipeline again. Do not circumvent budget checks.
+7. **One run at a time.** If `.dojutsu-active` names a live PID, a run is already in progress; wait, or investigate a stale process.
 
-7. **Git checkpoints are mandatory.** The pipeline tags every stage transition (`dojutsu/*` tags). These enable rollback. Never delete dojutsu git tags during a run.
-
-8. **Sentinel file prevents concurrent runs.** If `.dojutsu-active` exists with a live PID, the pipeline is already running. Wait or investigate the stale process.
-
-9. **Model tiers come from dojutsu.toml.** Never hardcode model IDs. The TOML `[models.tiers]` and `[models.assignments]` sections are the single source of truth for what model handles what task.
+8. **Standalone copy.** A published copy installs its runtime once, with `bun install --frozen-lockfile --production` in its `skills/` directory, and then runs the same commands.
 
 ---
 
@@ -41,28 +40,28 @@ These are non-negotiable. Violating any rule corrupts pipeline state or produces
 
 ```bash
 # Audit only (DEFAULT -- safe, no code changes):
-python3 $SKILL_DIR/scripts/run-pipeline.py $PROJECT_DIR
+bun $SKILL_DIR/scripts/run-pipeline.ts $PROJECT_DIR
 
 # Audit + fix (interactive -- approve after each phase):
-python3 $SKILL_DIR/scripts/run-pipeline.py $PROJECT_DIR --fix
+bun $SKILL_DIR/scripts/run-pipeline.ts $PROJECT_DIR --fix
 
 # Fix specific phases only:
-python3 $SKILL_DIR/scripts/run-pipeline.py $PROJECT_DIR --fix --phases 0,1,2
+bun $SKILL_DIR/scripts/run-pipeline.ts $PROJECT_DIR --fix --phases 0,1,2
 
 # Fully autonomous (no approval gates):
-python3 $SKILL_DIR/scripts/run-pipeline.py $PROJECT_DIR --fix --auto
+bun $SKILL_DIR/scripts/run-pipeline.ts $PROJECT_DIR --fix --auto
 
 # Resume from saved state:
-python3 $SKILL_DIR/scripts/run-pipeline.py $PROJECT_DIR --resume
+bun $SKILL_DIR/scripts/run-pipeline.ts $PROJECT_DIR --resume
 
 # Show current state (read-only):
-python3 $SKILL_DIR/scripts/run-pipeline.py $PROJECT_DIR --status
+bun $SKILL_DIR/scripts/run-pipeline.ts $PROJECT_DIR --status
 
 # Show report regeneration instructions:
-python3 $SKILL_DIR/scripts/run-pipeline.py $PROJECT_DIR --report
+bun $SKILL_DIR/scripts/run-pipeline.ts $PROJECT_DIR --report
 
-# Remove all audit data for a fresh start:
-python3 $SKILL_DIR/scripts/run-pipeline.py $PROJECT_DIR --clean
+# Recursively delete docs/audit/ (only when the operator asks for exactly this):
+bun $SKILL_DIR/scripts/run-pipeline.ts $PROJECT_DIR --clean
 ```
 
 ---
@@ -73,15 +72,15 @@ python3 $SKILL_DIR/scripts/run-pipeline.py $PROJECT_DIR --clean
 |------|----------|-------------|---------|
 | *(none)* | | Audit only. Runs rinnegan + byakugan. No code changes. | Yes |
 | `--fix` | | Enable code fixing (rasengan + sharingan loop after audit). | |
-| `--phases N,M` | `--fix` | Fix only selected phases (0-indexed). Others are skipped. | All phases |
+| `--phases N,M` | `--fix` | Fix only selected phases (0-indexed). The others are not opened and stay pending; a later run can select them. | All phases |
 | `--interactive` | `--fix` | Approve after each phase before continuing. | Default with --fix |
 | `--auto` | `--fix` | No approval gates. Fully autonomous end-to-end. | |
 | `--resume` | | Resume from saved state and flags. Clears exit_reason. | |
 | `--status` | | Show pipeline state without advancing. Read-only. | |
 | `--report` | | Show report regeneration instructions. | |
-| `--clean` | | Remove `docs/audit/` directory for a fresh start. | |
+| `--clean` | | Recursively delete `docs/audit/`. Run it only on the operator's explicit request (R28). | |
 
-**Mutual exclusivity:** `--status`, `--report`, and `--clean` are informational commands that do not advance the pipeline. `--auto` and `--interactive` are mutually exclusive.
+**Mutual exclusivity:** `--status`, `--report`, and `--clean` do not advance the pipeline; `--status` and `--report` are informational, and `--clean` deletes. `--auto` and `--interactive` are mutually exclusive.
 
 ---
 
@@ -102,10 +101,10 @@ BYAKUGAN_ACTIVE ──────── trace dependencies, generate structured
 RASENGAN_PHASE_0 ──────── auto-fix HIGH+MEDIUM, human review LOW
     |
     v
-SHARINGAN_PHASE_0 ─────── 6-gate verification (deterministic + independent + runtime)
+SHARINGAN_PHASE_0 ─────── Sharingan over the phase range (run.sh --base <phase start>)
     |                         |
-    |   BLOCKED ──────────────+──> back to RASENGAN_PHASE_0 (re-fix)
-    |   CLEAR ────────────────+
+    |   BLOCKED ──────────────+──> fix, commit, re-run Sharingan (stays here)
+    |   CLEAR / INFRA_* ──────+
     |                         v
     +──> RASENGAN_PHASE_1 ──> SHARINGAN_PHASE_1 ──> ... (repeat per phase)
                                                         |
@@ -127,13 +126,13 @@ The pipeline detects the current stage from **disk artifacts**, not from memory:
 |-------|------------|
 | RINNEGAN_ACTIVE | `docs/audit/master-audit.md` does not exist |
 | BYAKUGAN_ACTIVE | Full deep-analysis package missing: `dependency-graph.json`, `clusters.json`, `impact-analysis.jsonl`, `narrative.md`, `scorecard.md`, `deployment-plan.md`, or `executive-brief.md` |
-| RASENGAN_PHASE_N | `rasengan-state.json` shows incomplete phases |
-| SHARINGAN_PHASE_N | Completed but unverified phases in `rasengan-state.json` vs `verified_phases` in state |
-| PIPELINE_COMPLETE | `rasengan-state.json` status is ALL_PHASES_COMPLETE and all phases verified |
+| RASENGAN_PHASE_N | N is the first phase in `rasengan-state.json` `phases_pending` that `--phases` selects (any pending phase without `--phases`) |
+| SHARINGAN_PHASE_N | A phase dojutsu opened (it has a `phase-N-start` checkpoint) is complete in `rasengan-state.json` but not in `verified_phases`. A phase never opened (no tasks, or resolved by revalidation) has no range and is not verified, and neither is one that closed with no commit since it opened (rasengan found nothing left to fix): the pipeline drops its checkpoint and moves on |
+| PIPELINE_COMPLETE | No phase `--phases` selects has tasks pending (without `--phases`, `rasengan-state.json` status is `completed`) and every opened phase is verified |
 
 ### Delegation Model
 
-Dojutsu does NOT execute eye logic directly. It calls each eye's `run-pipeline.py` as a subprocess, reads its stdout for ACTION instructions or completion signals, and passes those through to you. The eye scripts are the authority for their domain.
+Dojutsu does NOT execute eye logic directly. It calls each eye's `run-pipeline.ts` as a subprocess, reads its stdout for ACTION instructions or completion signals, and passes those through to you. The eye scripts are the authority for their domain.
 
 ---
 
@@ -141,7 +140,7 @@ Dojutsu does NOT execute eye logic directly. It calls each eye's `run-pipeline.p
 
 ### RINNEGAN_ACTIVE (Scanning)
 
-**What happens:** Pipeline delegates to rinnegan's `run-pipeline.py`. Rinnegan inventories the project, runs grep patterns, dispatches LLM scanners, aggregates findings, enriches with fix instructions, and generates documentation.
+**What happens:** Pipeline delegates to rinnegan's `run-pipeline.ts`. Rinnegan inventories the project, runs grep patterns, dispatches LLM scanners, aggregates findings, enriches with fix instructions, and generates documentation.
 
 **What you do:** Execute the ACTION that the pipeline prints. Agent stages write checkpoint artifacts only. Published docs are compiled deterministically from SSOT data. Run the pipeline script again after each action completes.
 
@@ -157,7 +156,7 @@ Dojutsu does NOT execute eye logic directly. It calls each eye's `run-pipeline.p
 
 ### BYAKUGAN_ACTIVE (Analysis)
 
-**What happens:** Pipeline delegates to byakugan's `run-pipeline.py`. Byakugan builds a dependency graph, clusters findings, and dispatches impact analysis agents. The pipeline then compiles the final deep-analysis docs deterministically.
+**What happens:** Pipeline delegates to byakugan's `run-pipeline.ts`. Byakugan builds a dependency graph, clusters findings, and dispatches impact analysis agents. The pipeline then compiles the final deep-analysis docs deterministically.
 
 **What you do:** Execute the ACTION the pipeline prints. Dispatch impact analysts only. The deterministic bundle compiler owns the final published docs.
 
@@ -177,7 +176,7 @@ Dojutsu does NOT execute eye logic directly. It calls each eye's `run-pipeline.p
 
 ### RASENGAN_PHASE_N (Fixing)
 
-**What happens:** Pipeline delegates to rasengan's `run-pipeline.py` for the current phase. Rasengan reads the phase task file and tells you which finding to fix next.
+**What happens:** Pipeline delegates to rasengan's `run-pipeline.ts --phase N` for the current phase. Rasengan reads the phase task file and tells you which finding to fix next. It hands out phase N's tasks only: once none are left it prints `PHASE_COMPLETE: N` instead of the next phase's first task, and the next run sends phase N to Sharingan. The next phase opens after Sharingan passes this one.
 
 **What you do:** Read the source file, locate the violation, apply the fix (using target_code or fix_plan from the task), verify it compiles, update the task JSON status.
 
@@ -193,47 +192,19 @@ Dojutsu does NOT execute eye logic directly. It calls each eye's `run-pipeline.p
 
 ### SHARINGAN_PHASE_N (Verification)
 
-**What happens:** Pipeline emits detailed sharingan instructions for the just-completed phase, including exact commands for all 6 gates.
+**What happens:** The pipeline prints the Sharingan command for the just-completed phase.
 
-**What you do:** Run each gate in order. The pipeline output tells you exactly what to run:
+**What you do:** Run the command it prints: the Sharingan entrypoint over the phase's range, `~/.coding-agent/sharingan/run.sh --base <phase-start commit>`. Read the verdict it writes to `.sharingan/<HEAD sha>.verdict.json` in the project root. On `BLOCKED` or `PARTIAL`, fix what the verdict names, commit, and run the pipeline script again. On `CLEAR` or `INFRA_*`, run the pipeline script again.
 
-**Gate 0 -- Deterministic Build (bash, unfakeable):**
-```bash
-bash $SHARINGAN_DIR/gates/verify-deterministic.sh $BASE_COMMIT
-```
-Type-check, lint, stub detection, unsafe type detection. No LLM involved.
+**How the phase is marked verified:** the pipeline reads that verdict file itself. A verdict for the current HEAD whose `base` is the phase-start commit and whose verdict is `CLEAR` or `INFRA_*` adds the phase to `verified_phases`, and the pipeline advances to the next phase or to PIPELINE_COMPLETE. Any other verdict, or none, keeps the phase here.
 
-**Gate 1 -- Spec Compliance (evidence-based):**
-For each task in the phase task file, verify the fix is present with file:line evidence and SHA-256 hash.
-
-**Gate 2 -- Code Correctness (LLM + tool calls):**
-Check SSOT, security, typing, business logic on files modified since the base commit. Every check requires a Read/Grep tool call as evidence.
-
-**Gate 3 -- Independent Verification (fresh-context sub-agent):**
-```bash
-bash $SHARINGAN_DIR/gates/verify-independent.sh --plan $TASK_FILE --base $BASE_COMMIT
-```
-A separate agent with zero builder context rates each requirement. MUST use a different model or engine from the builder.
-
-**Gate 4 -- Runtime Verification (if UI/API changes):**
-Start dev server, verify pages load and endpoints respond using Playwright/curl.
-
-**Gate 5 -- Reconciliation (deterministic, no LLM):**
-```bash
-bash $SHARINGAN_DIR/gates/reconcile.sh $BASE_COMMIT
-```
-Cross-references all gate results. Writes CLEAR or BLOCKED verdict.
-
-**CLEAR verdict:** Phase is marked verified. Run the pipeline script again to advance to the next phase.
-**BLOCKED verdict:** Fix the issues found, then run the pipeline script again. Sharingan re-runs.
-
-**Interactive mode:** After a phase is verified (CLEAR), the pipeline pauses for approval before continuing to the next phase. The human can stop, switch to auto mode, or proceed.
+**Interactive mode:** After a phase is verified, the pipeline prints the verdict and pauses for approval before continuing to the next phase. The human can stop, switch to auto mode, or proceed.
 
 ### PIPELINE_COMPLETE
 
-**What happens:** All phases fixed and verified. Pipeline prints a summary:
+**What happens:** All phases (with `--phases`, the selected ones) fixed and verified. Pipeline prints a summary:
 - Total findings detected
-- Phases verified (all CLEAR)
+- Phases verified (each by a CLEAR or INFRA_* verdict)
 - Sessions used
 - Pipeline ID
 
@@ -253,12 +224,9 @@ Cross-references all gate results. Writes CLEAR or BLOCKED verdict.
 3. Detects current stage from disk artifacts (not from saved stage field)
 4. Continues from the detected stage
 
-### Graceful Exit Checklist (when approaching context limit)
+### Continuing in a New Session
 
-1. Let the current eye finish its current action
-2. Run `--status` to verify the saved state
-3. End the session
-4. Start a new session and run `/dojutsu` -- it resumes exactly where it left off
+Each script run saves pipeline state to disk, so a new session resumes by running `/dojutsu` (or the pipeline script); there is nothing to save by hand first.
 
 ### What NOT to Do on Resume
 
@@ -282,11 +250,11 @@ Each eye has an independent failure counter in `state.failure_counts`. Reset to 
 
 ### Rate Limit Detection
 
-The pipeline checks combined stdout+stderr for these keywords: `rate limit`, `limit exceeded`, `too many requests`, `429`, `quota`, `hit your limit`, `resets`. If detected, the pipeline auto-pauses (does not count as a failure).
+The pipeline checks the eye script's stderr for the rate-limit keywords in `RATE_LIMIT_KEYWORDS` (`scripts/run_pipeline_lib.ts`). If one matches, the pipeline auto-pauses (does not count as a failure).
 
 ### HMAC Mismatch
 
-Means `dojutsu-state.json` was modified outside the pipeline. Delete the state file and restart. The progress narrative is preserved (append-only, separate file).
+Means `dojutsu-state.json` was modified outside the pipeline. The recovery is to delete the state file and restart: show the operator the path and get their go-ahead before deleting it. The progress narrative is preserved (append-only, separate file).
 
 ### Missing Skills
 
@@ -294,46 +262,20 @@ Pre-flight checks verify all 4 sibling skills (rinnegan, byakugan, rasengan, sha
 
 ### Stale Sentinel
 
-If the sentinel PID is dead, the pipeline auto-cleans the sentinel on next run. If it persists, delete `docs/audit/data/.dojutsu-active` manually.
+If the sentinel PID is dead, the pipeline auto-cleans the sentinel on next run. If it persists, ask the operator before deleting `docs/audit/data/.dojutsu-active`.
 
 ---
 
-## Dispatch Mode Reference
-
-### Native Mode
+## Dispatch Reference
 
 Pipeline prints `DISPATCH_MODE: native`. ACTION instructions include `MODEL: <tier>` hints. Use your agent's own model selection mechanism (e.g., Claude's `model` parameter for subagents).
 
-### Agent-Mux Mode
-
-Pipeline prints `DISPATCH_MODE: agent-mux`. ACTION instructions include `ROLE: <role>`. Pipe requests to agent-mux:
-```bash
-printf '{"role":"<ROLE>","prompt":"...","cwd":"/path/to/project"}' | agent-mux --stdin
-```
-
-### Verifier Independence
-
-The verifier (sharingan Gate 3) MUST use a different engine or model from the builder. In native mode, the pipeline specifies a different model tier. In agent-mux mode, the verifier role routes to a different engine automatically.
-
 ---
 
-## Anti-Sycophancy Rules
+## Recap
 
 1. **Do not skip stages.** A finding that "looks fine" still needs detection, analysis, remediation, and verification. No shortcuts.
 
 2. **Do not override confidence routing.** If the pipeline says LOW confidence requires human review, present it to the human. Do not auto-fix it to save time.
 
-3. **Do not claim PIPELINE_COMPLETE early.** The pipeline determines completion from disk artifacts, not from agent claims. Only the pipeline can print PIPELINE_COMPLETE.
-
-4. **Budget is a feature, not a bug.** Auto-pause protects the user's wallet. Never circumvent budget checks or pretend remaining budget is sufficient.
-
-5. **Disk state is truth.** If your memory of the pipeline state disagrees with what `--status` shows, trust `--status`.
-
----
-
-## Resume Rules (Quick Reference)
-
-1. ALWAYS run the pipeline script first.
-2. NEVER write inline scripts to generate artifacts.
-3. NEVER continue from memory of a previous session.
-4. The pipeline script is the ONLY authority.
+3. **Disk state is truth.** If your memory of the pipeline state disagrees with what `--status` shows, trust `--status`.
