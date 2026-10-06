@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { projectFiles } from "@quality-test/project-files.ts";
@@ -6,6 +6,11 @@ import { defaultState, ensureSentinel, getTokensUsed, loadState, logDispatch, re
 import type { DojutsuState } from "@dojutsu/dojutsu_state.ts";
 import { detectStage, runPipeline } from "@dojutsu/run_pipeline_lib.ts";
 import type { DojutsuFlags } from "@dojutsu/dojutsu_state.ts";
+
+// The pipeline tests drive real subprocesses (git, the sharingan stub), so bun's 5 s default is too
+// tight on a loaded machine.
+const SUBPROCESS_TEST_TIMEOUT_MS = 60_000;
+setDefaultTimeout(SUBPROCESS_TEST_TIMEOUT_MS);
 
 const BYAKUGAN_PACKAGE = ["dependency-graph.json", "clusters.json", "impact-analysis.jsonl", "narrative.md", "scorecard.md", "deployment-plan.md", "executive-brief.md"];
 
