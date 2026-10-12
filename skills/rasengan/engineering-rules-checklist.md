@@ -212,12 +212,13 @@ mvn checkstyle:check -pl "$MODULE" -q
 **R33** — Sole Package Managers
 **R35** — Commit Cadence
 **R36** — Claim Provenance & Honest Uncertainty
-**R37** — Outcome-First Delivery
+**R37** — Program Ledger
 **R38** — Impeccable UX Governing Layer
 **R39** — Downstream Fault Triage
 **R40** — ADHD Output Shape
 **R41** — Orchestrator Model Tiering
 **R42** — Artifact Deliverables Skip Software Process
+**R43** — Parallel by Default
 
 ### Safety
 **R05** — Security

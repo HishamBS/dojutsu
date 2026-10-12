@@ -98,7 +98,7 @@ describe("saveState", () => {
 
 function git(cwd: string, ...args: string[]): string {
   const result = Bun.spawnSync(
-    ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "user.name=test", "-c", "user.email=test@example.com", ...args],
+    ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "maintenance.auto=false", "-c", "gc.auto=0", "-c", "user.name=test", "-c", "user.email=test@example.com", ...args],
     { cwd, stdout: "pipe", stderr: "pipe" },
   );
   if (result.exitCode !== 0) throw new Error(result.stderr.toString());

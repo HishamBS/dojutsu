@@ -10,7 +10,7 @@ export default defineConfig(
   { ignores: ["eslint.config.ts", "**/fixtures/**", "**/node_modules/**", "**/*.mjs", "**/*.js", "**/*.tsx", "ui-ux-pro-max/**", "unlazy/**"] },
   js.configs.recommended,
   {
-    files: ["rinnegan/**/*.ts", "byakugan/**/*.ts", "rasengan/**/*.ts", "dojutsu/**/*.ts", "setup-quality-gates/**/*.ts", "handoff/**/*.ts"],
+    files: ["rinnegan/**/*.ts", "byakugan/**/*.ts", "rasengan/**/*.ts", "dojutsu/**/*.ts", "setup-quality-gates/**/*.ts"],
     extends: [tseslint.configs.recommendedTypeChecked],
     languageOptions: { parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname } },
     rules: {

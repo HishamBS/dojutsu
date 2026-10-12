@@ -6,7 +6,6 @@
     "rasengan/**/*.ts",
     "dojutsu/**/*.ts",
     "setup-quality-gates/**/*.ts",
-    "handoff/**/*.ts",
     "../violation_scanner.ts"
   ],
   "exclude": ["**/fixtures/**", "**/node_modules/**"],
