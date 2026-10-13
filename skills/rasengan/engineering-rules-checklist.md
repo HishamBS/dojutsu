@@ -41,8 +41,8 @@ These rules govern workflow and process. Rasengan cannot detect or fix them via 
 | R18 | Never Mention AI | No AI attribution in commits, code, or comments | Rasengan commit messages use `fix(phase-N):` format with no agent attribution. |
 | R19 | Spec Verification | Verify every requirement before claiming complete | Rasengan verifies each task via self-check and phase verification command. |
 | R22 | Semantic Code Search | Use semble for exploratory lookups | Rasengan uses semble search for file discovery; grep for exact-literal confirmation only. |
-| R23 | Plan-Mode Discipline | Non-trivial tasks start in plan mode | Rasengan operates post-plan; the executor must have produced a TaskCreate tasklist before exiting plan mode. |
-| R24 | Superpowers Skill Gates | Were required skills invoked at each phase gate? | Check against the R24 trigger map in CODING_RULES.md (the map lives there only). |
+| R23 | Plan-Mode Discipline | Non-trivial tasks start with intake and a blueprint | Rasengan operates post-plan; the executor must have an intake confirmation and a blueprint attached to the program ledger. |
+| R24 | Owned Process Skills | Were required skills invoked at each phase gate? | Check against the R24 trigger map in CODING_RULES.md (the map lives there only). |
 
 These rules are satisfied by the rasengan pipeline design itself, not by per-fix checks.
 
@@ -204,7 +204,7 @@ mvn checkstyle:check -pl "$MODULE" -q
 **R19** — Spec Verification Before Completion
 **R22** — Semantic Code Search
 **R23** — Plan-Mode Discipline
-**R24** — Superpowers Skill Gates
+**R24** — Owned Process Skills
 **R26** — Pre-Large-Change Reflection Checkpoint
 **R27** — Architect-Facing Decision Request Protocol
 **R29** — Web Access - Match the Task to the Tool
