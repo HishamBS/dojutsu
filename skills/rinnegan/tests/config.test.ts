@@ -18,15 +18,15 @@ max_parallel_agents = 5
 session_token_budget = 250000
 
 [models.tiers.cheap]
-claude = "claude-haiku-4-5"
+claude = "fake-claude-cheap"
 context_window = 200000
 
 [models.tiers.mid]
-claude = "claude-sonnet-4-6"
+claude = "fake-claude-mid"
 context_window = 1000000
 
 [models.tiers.premium]
-claude = "claude-opus-4-6"
+claude = "fake-claude-premium"
 context_window = 1000000
 
 [models.assignments]
@@ -43,8 +43,8 @@ describe("DojutsuConfig lookups", () => {
     { name: "assigned tier", read: (c: DojutsuConfig) => c.tierFor("scanner"), expected: "cheap" },
     { name: "premium tier", read: (c: DojutsuConfig) => c.tierFor("master_hub_generator"), expected: "premium" },
     { name: "unknown role tier", read: (c: DojutsuConfig) => c.tierFor("nonexistent_role"), expected: "mid" },
-    { name: "claude model", read: (c: DojutsuConfig) => c.modelFor("scanner"), expected: "claude-haiku-4-5" },
-    { name: "premium claude model", read: (c: DojutsuConfig) => c.modelFor("master_hub_generator"), expected: "claude-opus-4-6" },
+    { name: "claude model", read: (c: DojutsuConfig) => c.modelFor("scanner"), expected: "fake-claude-cheap" },
+    { name: "premium claude model", read: (c: DojutsuConfig) => c.modelFor("master_hub_generator"), expected: "fake-claude-premium" },
     { name: "engine without a model", read: (c: DojutsuConfig) => c.modelFor("enricher", "codex"), expected: "sonnet" },
     { name: "cheap context window", read: (c: DojutsuConfig) => c.contextWindowFor("scanner"), expected: 200_000 },
     { name: "mid context window", read: (c: DojutsuConfig) => c.contextWindowFor("enricher"), expected: 1_000_000 },
