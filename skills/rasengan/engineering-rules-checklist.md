@@ -37,7 +37,6 @@ These rules govern workflow and process. Rasengan cannot detect or fix them via 
 |------|------|-----------------|--------------------------|
 | R06 | Plan -> Approve -> Audit | Workflow: propose, get approval, implement, self-audit | Rasengan follows the plan from rinnegan. Each phase is verified before proceeding. |
 | R15 | No Estimates | Never estimate time or duration; size work in countable units (files, commands, steps, call sites) | Rasengan does not estimate remaining time. It reports task counts only. |
-| R17 | Validate Logging | Every commit has a Tier-1 log entry before completion is claimed | `fix(phase-N)` commits go through the normal commit path, so the Tier-1 hook logs them; rasengan never bypasses hooks. |
 | R18 | Never Mention AI | No AI attribution in commits, code, or comments | Rasengan commit messages use `fix(phase-N):` format with no agent attribution. |
 | R19 | Spec Verification | Verify every requirement before claiming complete | Rasengan verifies each task via self-check and phase verification command. |
 | R22 | Semantic Code Search | Use semble for exploratory lookups | Rasengan uses semble search for file discovery; grep for exact-literal confirmation only. |
@@ -200,7 +199,6 @@ mvn checkstyle:check -pl "$MODULE" -q
 **R11** — Documentation
 **R15** — No Estimates
 **R16** — Full Stack Verification
-**R17** — Validate Logging
 **R19** — Spec Verification Before Completion
 **R22** — Semantic Code Search
 **R23** — Plan-Mode Discipline
