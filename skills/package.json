@@ -1,5 +1,5 @@
 {
-  "name": "@dotfiles/quality-skills",
+  "name": "@assembly/quality-skills",
   "private": true,
   "type": "module",
   "scripts": {

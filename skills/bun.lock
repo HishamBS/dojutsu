@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@dotfiles/quality-skills",
+      "name": "@assembly/quality-skills",
       "dependencies": {
         "@lezer/python": "1.1.19",
         "fast-xml-parser": "5.11.2",
