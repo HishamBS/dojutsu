@@ -253,7 +253,8 @@ function delegateToEye(eye: string, projectDir: string, state: DojutsuState, out
 
   // Rate limits come first and are not retried. Only stderr is read: stdout carries ACTION text
   // that may mention "rate limit" in its instructions.
-  const errorOutput = stderr.toLowerCase();
+  // Stack-frame paths can contain keywords such as "quota" without a provider error.
+  const errorOutput = stderr.split("\n").filter((line) => !/^\s+at\s/.test(line)).join("\n").toLowerCase();
   if (RATE_LIMIT_KEYWORDS.some((keyword) => errorOutput.includes(keyword))) return pausePipeline(projectDir, state, eye, "Rate limited by provider", out);
 
   if (result.code !== 0 && stdout === "") {
