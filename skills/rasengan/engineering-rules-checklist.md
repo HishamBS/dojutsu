@@ -214,7 +214,7 @@ mvn checkstyle:check -pl "$MODULE" -q
 **R38** — Impeccable UX Governing Layer
 **R39** — Downstream Fault Triage
 **R40** — ADHD Output Shape
-**R41** — Orchestrator Model Tiering
+**R41** — Model Tiering
 **R42** — Artifact Deliverables Skip Software Process
 **R43** — Parallel by Default
 

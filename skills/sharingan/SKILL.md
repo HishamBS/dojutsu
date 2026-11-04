@@ -1,11 +1,11 @@
 ---
 name: sharingan
-description: Use when running the Sharingan QA verification pipeline over the push range before a push — the deterministic build gate, claim-provenance gate, and independent cross-engine review. Trigger on "run sharingan", "/sharingan", "verify before push", or a pre-push QA request. Cross-harness invocation surface for every engine; the implementation SSOT is run.sh.
+description: Use when running the Sharingan QA verification pipeline over the push range before a push — Gate 0 (the deterministic build), Gate 1 (claim provenance), and the independent cross-engine review. Trigger on "run sharingan", "/sharingan", "verify before push", or a pre-push QA request. Cross-harness invocation surface for every engine; the implementation SSOT is run.sh.
 ---
 
 # Sharingan — QA verification pipeline
 
-Runs the Sharingan QA pipeline against the push range (`base..HEAD`). Deterministic gates block and run inline; the cross-engine review is advisory and runs detached, so a full run costs about a second. Works from any harness — the pipeline is a single script, not a harness-specific skill.
+Runs the Sharingan pipeline against the push range (`base..HEAD`). Deterministic gates block and run inline; the cross-engine review is advisory and runs detached, so a full run costs about a second. Works from any harness — the pipeline is a single script, not a harness-specific skill.
 
 ## How It Works
 
@@ -42,4 +42,4 @@ Runs the Sharingan QA pipeline against the push range (`base..HEAD`). Determinis
 - `--gate0-only`: Gates 0 and 1 + reconciliation; writes `.sharingan/<sha>.gate0.json` (informational, never satisfies the push gate). The fast check the post-commit hook queues.
 - `--force`: bypass the verdict cache.
 
-The full gate policy and pre-push behavior live in `~/.coding-agent/CODING_RULES.md` (§Sharingan QA pipeline); the implementation SSOT is `~/.coding-agent/sharingan/run.sh`.
+The full gate policy and pre-push behavior live in `~/.coding-agent/CODING_RULES.md` (§Sharingan); the implementation SSOT is `~/.coding-agent/sharingan/run.sh`.
