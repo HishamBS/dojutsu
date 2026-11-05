@@ -34,8 +34,8 @@ interface ToolCase {
 // The project directory carries a space and a quote: every path must travel as argv data.
 const PROJECT_DIR_NAME = "it's a project";
 const NO_RETRY_DELAY_MS = 0;
-// Long enough for a fake to start and record its report path under load, well short of the fake's 5s sleep.
-const FAKE_START_TIMEOUT_MS = 2000;
+// The row's outcome is the timeout, so this is the time a fake gets to start and record its report path before it is cut: long enough that a loaded machine starts it first, short of the fake's 60s sleep.
+const FAKE_START_TIMEOUT_MS = 10_000;
 const tools = (rows: Row[], status: ToolCase["status"] = "success"): Pick<ToolCase, "rows" | "status"> => ({ rows, status });
 
 // A fake that prints `output` only when invoked with exactly these leading arguments.
@@ -379,7 +379,7 @@ describe("runToolSafe", () => {
     {
       name: "gitleaks: a timeout still removes the report",
       tool: "gitleaks",
-      fakes: (dir) => ({ bin: { gitleaks: `echo "$8" > "${join(dir, "report-path.txt")}"\nsleep 5\n` } }),
+      fakes: (dir) => ({ bin: { gitleaks: `echo "$8" > "${join(dir, "report-path.txt")}"\nexec sleep 60\n` } }),
       options: { timeoutMs: FAKE_START_TIMEOUT_MS },
       status: "timeout",
       error: "Tool timed out",
