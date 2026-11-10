@@ -372,7 +372,6 @@ const AGENT_SKILL_DIRS: readonly (readonly string[])[] = [
   [".claude", "commands"],
   [".codex", "skills"],
   [".config", "opencode", "command"],
-  [".gemini", "skills"],
 ];
 const EYE_SCRIPT = join("scripts", "run-pipeline.ts");
 const COMPLETE_STATES: readonly string[] = ["COMPLETE", "PIPELINE_COMPLETE"];

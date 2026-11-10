@@ -12,7 +12,7 @@ description: Full automated pipeline -- audit, analyze, fix, verify.
 
 The pipeline script is the only authority: all state lives on disk and is HMAC-signed, so only the script advances it.
 
-Dojutsu is a session-resilient, agent-agnostic pipeline that chains four specialized eyes in strict sequence: rinnegan detects violations, byakugan analyzes dependencies and impact, rasengan fixes findings, sharingan verifies fixes. All state lives on disk with HMAC-signed integrity. Any coding agent (Claude, Codex, OpenCode, Gemini) can run or resume any pipeline at any point.
+Dojutsu is a session-resilient, agent-agnostic pipeline that chains four specialized eyes in strict sequence: rinnegan detects violations, byakugan analyzes dependencies and impact, rasengan fixes findings, sharingan verifies fixes. All state lives on disk with HMAC-signed integrity. Any coding agent (Claude, Codex, OpenCode) can run or resume any pipeline at any point.
 
 ---
 

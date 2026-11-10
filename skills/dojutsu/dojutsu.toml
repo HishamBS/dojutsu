@@ -21,19 +21,16 @@ progress_prefix = "[dojutsu]"       # prefix for progress output lines
 # No role is assigned here by default (R41: the orchestrator picks each subagent's model per spawn)
 claude = "haiku"                    # Agent-tool alias; resolves to the current Haiku
 codex = "gpt-5.4-mini"             # $0.75/MTok input
-gemini = "gemini-3.1-flash-lite"   # cheapest Gemini
 
 [models.tiers.mid]
 # For: enrichers, analysts, fixers, verifiers — code understanding, reasoning
 claude = "sonnet"                   # Agent-tool alias; resolves to the current Sonnet
 codex = "gpt-5.4-mini"             # $0.75/MTok input (Codex mid = mini with high effort)
-gemini = "gemini-3-flash"          # mid-tier Gemini
 
 [models.tiers.premium]
 # For: narrator, master-hub — premium writing quality (max 2 dispatches per run)
 claude = "opus"                     # Agent-tool alias; resolves to the current Opus
 codex = "gpt-5.4"                  # $2.50/MTok input
-gemini = "gemini-3.1-pro"          # premium Gemini
 
 # Task → tier mapping
 [models.assignments]
