@@ -17,7 +17,7 @@ description: Use when fixing audit findings from a rinnegan scan, remediating en
 
 4. **LOW-confidence review.** After HIGH+MEDIUM findings are auto-fixed in a phase, the script presents any LOW-confidence findings for human review. The human decides: fix, skip, or skip-all for a rule. Decisions persist in `docs/audit/data/human-decisions.json` and are not re-asked on subsequent runs.
 
-5. **After ALL_PHASES_COMPLETE:** Run Sharingan (`/sharingan`, or `~/.coding-agent/sharingan/run.sh`) to verify the full codebase builds clean and passes quality gates. This is mandatory per CLAUDE.md before claiming completion.
+5. **After ALL_PHASES_COMPLETE:** Run `land --check` on the worktree to verify the full codebase builds clean and passes quality gates. This is mandatory per CLAUDE.md before claiming completion.
 
 ## Reference Files (read when needed)
 

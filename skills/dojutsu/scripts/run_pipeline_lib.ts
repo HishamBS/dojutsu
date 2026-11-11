@@ -1,7 +1,8 @@
 // Dojutsu pipeline orchestrator - session-resilient state machine.
-// Chains: rinnegan (detect) -> byakugan (analyze) -> [rasengan phase N -> sharingan phase N] x phases
+// Chains: rinnegan (detect) -> byakugan (analyze) -> [rasengan phase N -> verify phase N] x phases
 // -> COMPLETE. All state on disk. Survives session changes. Agent-agnostic.
 import { existsSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { isRecord, readTextStrict } from "@quality/io.ts";
 import { pyStr } from "@quality/py-format.ts";
@@ -31,8 +32,8 @@ const SKILL_DIR = dirname(import.meta.dir);
 const REVALIDATE_SCRIPT = join(dirname(SKILL_DIR), "rinnegan", "scripts", "revalidate-tasks.ts");
 const MAX_FAILURES_PER_EYE = 2;
 const MAX_ESCALATED_FAILURES = 2;
-// The verdicts Sharingan's push policy lets through; the phase ACTION says the same.
-const SHARINGAN_PASSING_VERDICTS: readonly string[] = ["CLEAR", "INFRA_DEGRADED", "INFRA_BLOCKED"];
+// The check a phase is verified by: the push gate's own, which exits 0 when the tree of HEAD carries a certificate (`land --check` writes it). DOJUTSU_CERTIFICATE_CHECK names another script, for a machine whose coding-agent home is elsewhere.
+const certificateCheck = (): string => process.env["DOJUTSU_CERTIFICATE_CHECK"] ?? join(homedir(), ".coding-agent", "gates", "push-certificate.ts");
 const RATE_LIMIT_KEYWORDS: readonly string[] = [
   "rate limit", "rate_limit", "rate-limit", "limit exceeded", "too many requests", "429", "quota exceeded", "quota",
   "hit your limit", "resets", "throttl", "retry-after", "temporarily unavailable", "overloaded",
@@ -40,7 +41,7 @@ const RATE_LIMIT_KEYWORDS: readonly string[] = [
 const RESUME_EXIT_REASONS: readonly (string | null | undefined)[] = ["rate_limited", "context_exhaustion", "manual_pause"];
 const ERROR_SNIPPET_CHARS = 500;
 const REVALIDATION_ERROR_CHARS = 200;
-const REQUIRED_SKILLS: readonly string[] = ["rinnegan", "byakugan", "rasengan", "sharingan"];
+const REQUIRED_SKILLS: readonly string[] = ["rinnegan", "byakugan", "rasengan"];
 
 const DEFAULT_FLAGS = { mode: "audit", phases: null, approval: "interactive", resume: false, status: false, report: false, clean: false } satisfies DojutsuFlags;
 type Out = (text: string) => void;
@@ -115,7 +116,7 @@ export function detectStage(projectDir: string, state: DojutsuState): string {
   // 2. Byakugan: the full analysis package must exist before the audit is complete.
   if (!BYAKUGAN_OUTPUTS.every((name) => existsSync(join(deepDir, name))) || !bundleVerdictOk(verdictPath, "byakugan")) return "BYAKUGAN_ACTIVE";
 
-  // 3. Rasengan + Sharingan per-phase loop.
+  // 3. Rasengan + verification per-phase loop.
   const rasenganStateFile = join(dataDir, "rasengan-state.json");
   if (!existsSync(rasenganStateFile)) return phaseToFix({}, state);
   const rasenganState = readJsonFile(rasenganStateFile);
@@ -124,11 +125,11 @@ export function detectStage(projectDir: string, state: DojutsuState): string {
   const completedPhases = phaseList(rasenganState, "phases_completed") ?? [];
   const verifiedPhases = state.verified_phases;
   const checkpoints = state.git_checkpoints;
-  // Sharingan verifies the range of fixes dojutsu opened for a phase. A phase it never opened (no
+  // The certification verifies the fixes dojutsu opened for a phase. A phase it never opened (no
   // tasks, or resolved by revalidation) has no range, so it is not verified; run_pipeline drops the
   // checkpoint of a phase that closed with no commit, for the same reason.
   const unverified = completedPhases.filter((phase) => !verifiedPhases.includes(phase) && phaseStartKey(phase) in checkpoints);
-  if (unverified.length > 0) return `SHARINGAN_PHASE_${unverified[0]}`;
+  if (unverified.length > 0) return `VERIFY_PHASE_${unverified[0]}`;
   if (rasenganState["status"] === RASENGAN_STATUS_COMPLETE) return "PIPELINE_COMPLETE";
   return phaseToFix(rasenganState, state);
 }
@@ -193,10 +194,9 @@ function pausePipeline(projectDir: string, state: DojutsuState, eye: string, rea
   return 0;
 }
 
-// --- Phase verification by Sharingan ---
+// --- Phase verification by the land certification ---
 
-// The --base Sharingan verifies a phase from: the commit recorded when it began. detectStage
-// sends only phases with that checkpoint to Sharingan.
+// The commit a phase began at. detectStage sends only phases with that checkpoint to verification.
 function phaseBase(state: DojutsuState, phase: number): string {
   const base = state.git_checkpoints[phaseStartKey(phase)];
   if (base === undefined) throw new Error(`no start checkpoint recorded for phase ${phase}`);
@@ -209,26 +209,9 @@ function phaseRangeIsEmpty(projectDir: string, state: DojutsuState, phase: numbe
   return result.code === 0 && result.stdout.trim() === "0";
 }
 
-// sharingan/run.sh writes verdicts under the git top level of the project.
-function sharinganVerdictDir(projectDir: string): string {
-  const result = runProcess(["git", "rev-parse", "--show-toplevel"], projectDir);
-  return join(result.code === 0 ? result.stdout.trim() : projectDir, ".sharingan");
-}
-
-// The verdict when Sharingan passed this phase's range at the current HEAD, else undefined.
-function passingPhaseVerdict(projectDir: string, state: DojutsuState, phase: number): string | undefined {
-  const head = getHeadSha(projectDir);
-  const path = join(sharinganVerdictDir(projectDir), `${head}.verdict.json`);
-  let verdict: unknown;
-  try {
-    verdict = readJsonFile(path);
-  } catch (error) {
-    if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
-  if (!isRecord(verdict) || verdict["commit"] !== head || verdict["base"] !== phaseBase(state, phase)) return undefined;
-  const status = verdict["verdict"];
-  return typeof status === "string" && SHARINGAN_PASSING_VERDICTS.includes(status) ? status : undefined;
+// "certified" when the tree of HEAD carries a certificate under this checkout's manifest and toolchain, else undefined.
+function passingPhaseVerdict(projectDir: string): string | undefined {
+  return runProcess(["bun", "--no-install", certificateCheck(), "HEAD"], projectDir).code === 0 ? "certified" : undefined;
 }
 
 // Runs an eye's pipeline script (with eyeArgs after the project dir) and handles its output.
@@ -295,26 +278,24 @@ function delegateToEye(eye: string, projectDir: string, state: DojutsuState, out
   return 0;
 }
 
-// Tells the LLM to run full sharingan for a phase.
-function emitSharinganAction(projectDir: string, state: DojutsuState, phase: number, out: Out): number {
+// Tells the LLM to certify the tree for a phase.
+function emitVerifyAction(projectDir: string, state: DojutsuState, phase: number, out: Out): number {
   const taskFile = join(projectDir, "docs/audit/data", `tasks/phase-${phase}-tasks.json`);
   if (!existsSync(taskFile)) {
     say(out, `ERROR: Phase task file not found: ${taskFile}`);
     return 1;
   }
-  const baseCommit = phaseBase(state, phase);
-  say(out, `STAGE: SHARINGAN_PHASE_${phase}`);
+  say(out, `STAGE: VERIFY_PHASE_${phase}`);
   say(out, `SKILL_DIR: ${SKILL_DIR}`);
   say(out, `PROJECT_DIR: ${projectDir}`);
   say(out);
-  say(out, `Phase ${phase} is complete. Verify it with Sharingan over the phase range.`);
+  say(out, `Phase ${phase} is complete. Verify it by certifying the tree.`);
   say(out);
-  say(out, `ACTION: Run: ~/.coding-agent/sharingan/run.sh --base ${baseCommit}`);
+  say(out, `ACTION: Run: land --check ${projectDir}`);
   say(out, `  Phase requirements: ${taskFile}`);
-  say(out, `  Verdict file: ${sharinganVerdictDir(projectDir)}/<HEAD sha>.verdict.json`);
   say(out);
-  say(out, "  CLEAR or INFRA_* → run this script again");
-  say(out, "  BLOCKED or PARTIAL → fix what the verdict names, commit, then run this script again");
+  say(out, "  PASS → run this script again");
+  say(out, "  FAIL → fix the task it names, commit, then run this script again");
   return 0;
 }
 
@@ -337,7 +318,7 @@ function emitCompletionSummary(projectDir: string, state: DojutsuState, out: Out
   say(out, `  Rinnegan: ${findingsCount} findings detected`);
   say(out, `  Byakugan: deep analysis in ${deepDir}/`);
   say(out, `  Rasengan: ${selected !== null && selected !== undefined && selected.length > 0 ? `phases ${pyList(selected)}` : "all phases"} fixed`);
-  say(out, `  Sharingan: ${verified.length} phases verified (CLEAR or INFRA_*)`);
+  say(out, `  Verification: ${verified.length} phases verified (certified)`);
   say(out, `  Sessions used: ${state.session_count}`);
   say(out, `  Pipeline ID: ${state.pipeline_id}`);
   appendProgress(projectDir, {
@@ -451,7 +432,7 @@ export async function runPipeline(projectInput: string, flags?: Partial<DojutsuF
   });
   if (missingSkills.length > 0) {
     say(out, `ERROR: Missing skills: ${missingSkills.join(", ")}`);
-    say(out, "  Install rinnegan, byakugan, rasengan and sharingan beside dojutsu in the same skills directory.");
+    say(out, "  Install rinnegan, byakugan and rasengan beside dojutsu in the same skills directory.");
     return 1;
   }
 
@@ -463,7 +444,7 @@ export async function runPipeline(projectInput: string, flags?: Partial<DojutsuF
   saveState(projectDir, state);
 
   // Startup revalidation: catch any code changes since the last run.
-  if (state.stage.startsWith("RASENGAN_PHASE_") || state.stage.startsWith("SHARINGAN_PHASE_")) {
+  if (state.stage.startsWith("RASENGAN_PHASE_") || state.stage.startsWith("VERIFY_PHASE_")) {
     say(out, `${getProgressPrefix()} Startup: revalidating pending tasks against live code...`);
     revalidateRemainingTasks(projectDir, out, false);
   }
@@ -489,32 +470,32 @@ export async function runPipeline(projectInput: string, flags?: Partial<DojutsuF
   let detected = detectStage(projectDir, state);
 
   // Audit mode stops before rasengan.
-  if (effectiveFlags.mode === "audit" && (detected.startsWith("RASENGAN_PHASE_") || detected.startsWith("SHARINGAN_PHASE_") || detected === "PIPELINE_COMPLETE")) {
+  if (effectiveFlags.mode === "audit" && (detected.startsWith("RASENGAN_PHASE_") || detected.startsWith("VERIFY_PHASE_") || detected === "PIPELINE_COMPLETE")) {
     return emitAuditComplete(projectDir, out);
   }
 
-  // A phase is verified by a passing Sharingan verdict for its own range, and by nothing else; the
+  // A phase is verified by a certificate for the tree at its end, and by nothing else; the
   // stage it then advances to is detected from disk like any other.
-  if (detected.startsWith("SHARINGAN_PHASE_")) {
+  if (detected.startsWith("VERIFY_PHASE_")) {
     const phase = Number(phaseSuffix(detected));
     let verdict: string | undefined;
     if (phaseRangeIsEmpty(projectDir, state, phase)) {
       // Opened, then closed with no commit: rasengan found nothing left to fix, so there is no range
       // to verify. Dropping its start makes it a phase never opened, which detectStage leaves out of
-      // Sharingan, and keeps it out once later phases commit.
+      // verification, and keeps it out once later phases commit.
       delete state.git_checkpoints[phaseStartKey(phase)];
       saveState(projectDir, state);
-      say(out, `${getProgressPrefix()} Phase ${phase} closed with no commits: nothing for Sharingan to verify.`);
+      say(out, `${getProgressPrefix()} Phase ${phase} closed with no commits: nothing to verify.`);
       detected = detectStage(projectDir, state);
     } else {
-      verdict = passingPhaseVerdict(projectDir, state, phase);
+      verdict = passingPhaseVerdict(projectDir);
     }
     if (verdict !== undefined) {
       state.verified_phases.push(phase);
       state.verified_phases.sort((a, b) => a - b);
       saveState(projectDir, state);
       const prefix = getProgressPrefix();
-      say(out, `${prefix} Phase ${phase} verified by Sharingan (${verdict}).`);
+      say(out, `${prefix} Phase ${phase} verified (${verdict}).`);
       say(out, `${prefix} Revalidating remaining tasks after Phase ${phase} fixes...`);
       revalidateRemainingTasks(projectDir, out, true);
       if (effectiveFlags.approval === "interactive" && effectiveFlags.mode === "fix") return emitPhaseApproval(phase, verdict, out);
@@ -540,10 +521,10 @@ export async function runPipeline(projectInput: string, flags?: Partial<DojutsuF
   if (detected === "RINNEGAN_ACTIVE") return delegateToEye("rinnegan", projectDir, state, out);
   if (detected === "BYAKUGAN_ACTIVE") return delegateToEye("byakugan", projectDir, state, out);
   if (detected.startsWith("RASENGAN_PHASE_")) {
-    // Only this phase's tasks: the next phase opens once Sharingan has passed this one.
+    // Only this phase's tasks: the next phase opens once verification has passed this one.
     return delegateToEye("rasengan", projectDir, state, out, "--phase", phaseSuffix(detected));
   }
-  if (detected.startsWith("SHARINGAN_PHASE_")) return emitSharinganAction(projectDir, state, Number(phaseSuffix(detected)), out);
+  if (detected.startsWith("VERIFY_PHASE_")) return emitVerifyAction(projectDir, state, Number(phaseSuffix(detected)), out);
   if (detected === "PIPELINE_COMPLETE") return emitCompletionSummary(projectDir, state, out);
   say(out, `ERROR: Unknown stage: ${detected}`);
   return 1;

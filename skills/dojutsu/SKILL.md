@@ -2,7 +2,7 @@
 name: dojutsu
 description: Full automated pipeline -- audit, analyze, fix, verify.
   Session-resilient, agent-agnostic, HMAC-signed state machine. Chains rinnegan
-  (detect), byakugan (analyze), rasengan (fix), sharingan (verify). Run on any
+  (detect), byakugan (analyze), rasengan (fix), verify (land certification). Run on any
   project for complete quality remediation.
 ---
 
@@ -12,7 +12,7 @@ description: Full automated pipeline -- audit, analyze, fix, verify.
 
 The pipeline script is the only authority: all state lives on disk and is HMAC-signed, so only the script advances it.
 
-Dojutsu is a session-resilient, agent-agnostic pipeline that chains four specialized eyes in strict sequence: rinnegan detects violations, byakugan analyzes dependencies and impact, rasengan fixes findings, sharingan verifies fixes. All state lives on disk with HMAC-signed integrity. Any coding agent (Claude, Codex, OpenCode) can run or resume any pipeline at any point.
+Dojutsu is a session-resilient, agent-agnostic pipeline that chains four stages in strict sequence: rinnegan detects violations, byakugan analyzes dependencies and impact, rasengan fixes findings, the land certification verifies fixes. All state lives on disk with HMAC-signed integrity. Any coding agent (Claude, Codex, OpenCode) can run or resume any pipeline at any point.
 
 ---
 
@@ -71,7 +71,7 @@ bun $SKILL_DIR/scripts/run-pipeline.ts $PROJECT_DIR --clean
 | Flag | Requires | Description | Default |
 |------|----------|-------------|---------|
 | *(none)* | | Audit only. Runs rinnegan + byakugan. No code changes. | Yes |
-| `--fix` | | Enable code fixing (rasengan + sharingan loop after audit). | |
+| `--fix` | | Enable code fixing (rasengan + verify loop after audit). | |
 | `--phases N,M` | `--fix` | Fix only selected phases (0-indexed). The others are not opened and stay pending; a later run can select them. | All phases |
 | `--interactive` | `--fix` | Approve after each phase before continuing. | Default with --fix |
 | `--auto` | `--fix` | No approval gates. Fully autonomous end-to-end. | |
@@ -101,12 +101,12 @@ BYAKUGAN_ACTIVE ──────── trace dependencies, generate structured
 RASENGAN_PHASE_0 ──────── auto-fix HIGH+MEDIUM, human review LOW
     |
     v
-SHARINGAN_PHASE_0 ─────── Sharingan over the phase range (run.sh --base <phase start>)
+VERIFY_PHASE_0 ─────── `land --check` of the tree at the end of the phase
     |                         |
-    |   BLOCKED ──────────────+──> fix, commit, re-run Sharingan (stays here)
+    |   BLOCKED ──────────────+──> fix, commit, re-run `land --check` (stays here)
     |   CLEAR / INFRA_* ──────+
     |                         v
-    +──> RASENGAN_PHASE_1 ──> SHARINGAN_PHASE_1 ──> ... (repeat per phase)
+    +──> RASENGAN_PHASE_1 ──> VERIFY_PHASE_1 ──> ... (repeat per phase)
                                                         |
                                                         v
                                                   PIPELINE_COMPLETE
@@ -116,7 +116,7 @@ SHARINGAN_PHASE_0 ─────── Sharingan over the phase range (run.sh -
 
 **Audit mode** (default): `rinnegan -> byakugan -> AUDIT_COMPLETE`. No code changes. Safe for read-only exploration.
 
-**Fix mode** (`--fix`): Full pipeline with `[rasengan N -> sharingan N] x phases` loop after the audit.
+**Fix mode** (`--fix`): Full pipeline with `[rasengan N -> verify N] x phases` loop after the audit.
 
 ### Stage Detection
 
@@ -127,7 +127,7 @@ The pipeline detects the current stage from **disk artifacts**, not from memory:
 | RINNEGAN_ACTIVE | `docs/audit/master-audit.md` does not exist |
 | BYAKUGAN_ACTIVE | Full deep-analysis package missing: `dependency-graph.json`, `clusters.json`, `impact-analysis.jsonl`, `narrative.md`, `scorecard.md`, `deployment-plan.md`, or `executive-brief.md` |
 | RASENGAN_PHASE_N | N is the first phase in `rasengan-state.json` `phases_pending` that `--phases` selects (any pending phase without `--phases`) |
-| SHARINGAN_PHASE_N | A phase dojutsu opened (it has a `phase-N-start` checkpoint) is complete in `rasengan-state.json` but not in `verified_phases`. A phase never opened (no tasks, or resolved by revalidation) has no range and is not verified, and neither is one that closed with no commit since it opened (rasengan found nothing left to fix): the pipeline drops its checkpoint and moves on |
+| VERIFY_PHASE_N | A phase dojutsu opened (it has a `phase-N-start` checkpoint) is complete in `rasengan-state.json` but not in `verified_phases`. A phase never opened (no tasks, or resolved by revalidation) has no range and is not verified, and neither is one that closed with no commit since it opened (rasengan found nothing left to fix): the pipeline drops its checkpoint and moves on |
 | PIPELINE_COMPLETE | No phase `--phases` selects has tasks pending (without `--phases`, `rasengan-state.json` status is `completed`) and every opened phase is verified |
 
 ### Delegation Model
@@ -176,7 +176,7 @@ Dojutsu does NOT execute eye logic directly. It calls each eye's `run-pipeline.t
 
 ### RASENGAN_PHASE_N (Fixing)
 
-**What happens:** Pipeline delegates to rasengan's `run-pipeline.ts --phase N` for the current phase. Rasengan reads the phase task file and tells you which finding to fix next. It hands out phase N's tasks only: once none are left it prints `PHASE_COMPLETE: N` instead of the next phase's first task, and the next run sends phase N to Sharingan. The next phase opens after Sharingan passes this one.
+**What happens:** Pipeline delegates to rasengan's `run-pipeline.ts --phase N` for the current phase. Rasengan reads the phase task file and tells you which finding to fix next. It hands out phase N's tasks only: once none are left it prints `PHASE_COMPLETE: N` instead of the next phase's first task, and the next run sends phase N to verification. The next phase opens after verification passes this one.
 
 **What you do:** Read the source file, locate the violation, apply the fix (using target_code or fix_plan from the task), verify it compiles, update the task JSON status.
 
@@ -190,13 +190,13 @@ Dojutsu does NOT execute eye logic directly. It calls each eye's `run-pipeline.t
 
 **Commit convention:** `fix(phase-N): [phase-name] - X applied`
 
-### SHARINGAN_PHASE_N (Verification)
+### VERIFY_PHASE_N (Verification)
 
-**What happens:** The pipeline prints the Sharingan command for the just-completed phase.
+**What happens:** The pipeline prints the `land --check` command for the just-completed phase.
 
-**What you do:** Run the command it prints: the Sharingan entrypoint over the phase's range, `~/.coding-agent/sharingan/run.sh --base <phase-start commit>`. Read the verdict it writes to `.sharingan/<HEAD sha>.verdict.json` in the project root. On `BLOCKED` or `PARTIAL`, fix what the verdict names, commit, and run the pipeline script again. On `CLEAR` or `INFRA_*`, run the pipeline script again.
+**What you do:** Run the command it prints: `land --check <project dir>`, which certifies the tree at the end of the phase and writes the certificate the pipeline looks for. On a failure, fix the task it names, commit, and run the pipeline script again. On a pass, run the pipeline script again.
 
-**How the phase is marked verified:** the pipeline reads that verdict file itself. A verdict for the current HEAD whose `base` is the phase-start commit and whose verdict is `CLEAR` or `INFRA_*` adds the phase to `verified_phases`, and the pipeline advances to the next phase or to PIPELINE_COMPLETE. Any other verdict, or none, keeps the phase here.
+**How the phase is marked verified:** the pipeline asks the push gate's own check (`gates/push-certificate.ts`) whether the tree of HEAD carries a certificate. A certificate adds the phase to `verified_phases`, and the pipeline advances to the next phase or to PIPELINE_COMPLETE.
 
 **Interactive mode:** After a phase is verified, the pipeline prints the verdict and pauses for approval before continuing to the next phase. The human can stop, switch to auto mode, or proceed.
 
@@ -258,7 +258,7 @@ Means `dojutsu-state.json` was modified outside the pipeline. The recovery is to
 
 ### Missing Skills
 
-Pre-flight checks verify all 4 sibling skills (rinnegan, byakugan, rasengan, sharingan) are resolvable. If any are missing, the pipeline prints install instructions and exits.
+Pre-flight checks verify all 3 sibling skills (rinnegan, byakugan, rasengan) are resolvable. If any are missing, the pipeline prints install instructions and exits.
 
 ### Stale Sentinel
 

@@ -91,7 +91,7 @@ export function defaultState(): DojutsuState {
     current_phase: null,
     verified_phases: [],
     flags: { mode: "audit", phases: null, approval: "interactive" },
-    failure_counts: { rinnegan: 0, byakugan: 0, rasengan: 0, sharingan: 0 },
+    failure_counts: { rinnegan: 0, byakugan: 0, rasengan: 0, verify: 0 },
     session_count: 1,
     last_agent: process.env[DEFAULT_MODEL_ENV] ?? UNKNOWN_AGENT,
     git_checkpoints: {},
@@ -168,7 +168,7 @@ const LEGAL_TRANSITIONS: Readonly<Record<string, readonly string[]>> = {
   BYAKUGAN_ACTIVE: ["RASENGAN_PHASE_0", "AUDIT_COMPLETE"],
 };
 const RASENGAN_PREFIX = "RASENGAN_PHASE_";
-const SHARINGAN_PREFIX = "SHARINGAN_PHASE_";
+const VERIFY_PREFIX = "VERIFY_PHASE_";
 const PIPELINE_COMPLETE = "PIPELINE_COMPLETE";
 const AUDIT_COMPLETE = "AUDIT_COMPLETE";
 
@@ -180,9 +180,9 @@ function isLegalTransition(from: string, to: string): boolean {
   if (LEGAL_TRANSITIONS[from]?.includes(to)) return true;
   if (from.startsWith(RASENGAN_PREFIX)) {
     if (to.startsWith(RASENGAN_PREFIX) || to === PIPELINE_COMPLETE) return true;
-    if (to.startsWith(SHARINGAN_PREFIX)) return phaseOf(from) === phaseOf(to);
+    if (to.startsWith(VERIFY_PREFIX)) return phaseOf(from) === phaseOf(to);
   }
-  if (from.startsWith(SHARINGAN_PREFIX) && (to.startsWith(RASENGAN_PREFIX) || to === PIPELINE_COMPLETE)) return true;
+  if (from.startsWith(VERIFY_PREFIX) && (to.startsWith(RASENGAN_PREFIX) || to === PIPELINE_COMPLETE)) return true;
   if (from === "BYAKUGAN_ACTIVE" && to.startsWith(RASENGAN_PREFIX)) return true;
   if (from === AUDIT_COMPLETE && (to.startsWith(RASENGAN_PREFIX) || to === AUDIT_COMPLETE)) return true;
   // A --phases run completes only the phases it selected; a later run can open the rest.
@@ -217,8 +217,8 @@ export function transition(state: DojutsuState, newStage: string, projectDir: st
   } else if (newStage.startsWith(RASENGAN_PREFIX)) {
     state.current_eye = "rasengan";
     state.current_phase = Number(phaseOf(newStage));
-  } else if (newStage.startsWith(SHARINGAN_PREFIX)) {
-    state.current_eye = "sharingan";
+  } else if (newStage.startsWith(VERIFY_PREFIX)) {
+    state.current_eye = "verify";
     state.current_phase = Number(phaseOf(newStage));
   } else if (newStage === PIPELINE_COMPLETE) {
     state.current_eye = null;

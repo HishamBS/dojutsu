@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { projectFiles } from "@quality-test/project-files.ts";
 import { defaultState, ensureSentinel, getTokensUsed, loadState, logDispatch, readProgress, saveState } from "@dojutsu/dojutsu_state.ts";
@@ -7,9 +7,10 @@ import type { DojutsuState } from "@dojutsu/dojutsu_state.ts";
 import { detectStage, runPipeline } from "@dojutsu/run_pipeline_lib.ts";
 import type { DojutsuFlags } from "@dojutsu/dojutsu_state.ts";
 
-// The pipeline tests drive real subprocesses (git, the sharingan stub), so bun's 5 s default is too
+// The pipeline tests drive real subprocesses (git, the certificate check stub), so bun's 5 s default is too
 // tight on a loaded machine.
 const SUBPROCESS_TEST_TIMEOUT_MS = 60_000;
+process.env["DOJUTSU_CERTIFICATE_CHECK"] = join(import.meta.dir, "support", "certificate-check.ts");
 setDefaultTimeout(SUBPROCESS_TEST_TIMEOUT_MS);
 
 const BYAKUGAN_PACKAGE = ["dependency-graph.json", "clusters.json", "impact-analysis.jsonl", "narrative.md", "scorecard.md", "deployment-plan.md", "executive-brief.md"];
@@ -44,16 +45,16 @@ describe("detectStage", () => {
     { name: "byakugan stays active when the verdict only covers rinnegan", files: { ...auditPackage(), "docs/audit/data/bundle-verdict.json": bundleVerdict("rinnegan") }, stage: "BYAKUGAN_ACTIVE" },
     { name: "the full byakugan package opens rasengan at phase 0", files: auditPackage(), stage: "RASENGAN_PHASE_0" },
     {
-      name: "a phase that was completed but never opened is not sent to sharingan",
+      name: "a phase that was completed but never opened is not sent to verification",
       files: { ...auditPackage(), ...rasenganState({ phases_completed: [1], current_phase: 0, status: "in_progress" }) },
       state: { stage: "RASENGAN_PHASE_0", git_checkpoints: { "phase-0-start": "abc1234" } },
       stage: "RASENGAN_PHASE_0",
     },
     {
-      name: "an opened phase that rasengan completed goes to sharingan",
+      name: "an opened phase that rasengan completed goes to verification",
       files: { ...auditPackage(), ...rasenganState({ phases_completed: [0], current_phase: 1, status: "in_progress" }) },
       state: { git_checkpoints: { "phase-0-start": "abc1234" } },
-      stage: "SHARINGAN_PHASE_0",
+      stage: "VERIFY_PHASE_0",
     },
     {
       name: "a verified phase lets rasengan's own pointer open the next one",
@@ -102,8 +103,8 @@ async function run(project: string, flags: DojutsuFlags = FIX_AUTO): Promise<{ o
   return { output, code };
 }
 
-// A repo with phase 0 fixed and awaiting Sharingan; returns where its verdict file belongs.
-function awaitingSharingan(rasengan: object): { project: string; phaseStart: string; head: string; verdictPath: string } {
+// A repo with phase 0 fixed and awaiting verification; returns where the certificate marker the stub check reads belongs.
+function awaitingVerification(rasengan: object): { project: string; head: string; marker: string } {
   const project = projectFiles({ ...auditPackage(), ...rasenganState(rasengan), "docs/audit/data/tasks/phase-0-tasks.json": JSON.stringify({ phase: 0, tasks: [] }) });
   git(project, "init", "-q");
   git(project, "commit", "-q", "--allow-empty", "-m", "before phase 0");
@@ -111,47 +112,35 @@ function awaitingSharingan(rasengan: object): { project: string; phaseStart: str
   git(project, "commit", "-q", "--allow-empty", "-m", "fix(phase-0)");
   const head = git(project, "rev-parse", "--short", "HEAD");
   const state = loadState(project);
-  state.stage = "SHARINGAN_PHASE_0";
+  state.stage = "VERIFY_PHASE_0";
   state.git_checkpoints["phase-0-start"] = phaseStart;
   saveState(project, state);
-  return { project, phaseStart, head, verdictPath: join(project, ".sharingan", `${head}.verdict.json`) };
+  return { project, head, marker: join(project, ".certified") };
 }
 
-describe("runPipeline sharingan verification", () => {
+describe("runPipeline verification", () => {
   it.each([
     { name: "advances to rasengan's next phase", rasengan: { phases_completed: [0], current_phase: 1, status: "in_progress" }, next: "RASENGAN_PHASE_1" },
     { name: "completes the pipeline after the last phase", rasengan: { phases_completed: [0], current_phase: null, status: "completed" }, next: "PIPELINE_COMPLETE" },
-  ])("a passing verdict for the phase range verifies it and $name", async ({ rasengan, next }) => {
-    const { project, phaseStart, head, verdictPath } = awaitingSharingan(rasengan);
+  ])("a certified tree verifies the phase and $name", async ({ rasengan, next }) => {
+    const { project, marker } = awaitingVerification(rasengan);
 
-    writeJson(verdictPath, { commit: head, base: phaseStart, verdict: "BLOCKED" });
     await run(project);
     const blocked = loadState(project);
-    expect([blocked.stage, blocked.verified_phases]).toEqual(["SHARINGAN_PHASE_0", []]);
+    expect([blocked.stage, blocked.verified_phases]).toEqual(["VERIFY_PHASE_0", []]);
 
-    writeJson(verdictPath, { commit: head, base: phaseStart, verdict: "CLEAR" });
+    writeFileSync(marker, "");
     await run(project);
     const cleared = loadState(project);
     expect([cleared.stage, cleared.verified_phases]).toEqual([next, [0]]);
-  });
-
-  it("a verdict for another base or commit verifies nothing", async () => {
-    const { project, phaseStart, head, verdictPath } = awaitingSharingan({ phases_completed: [0], current_phase: null, status: "completed" });
-
-    writeJson(verdictPath, { commit: head, base: "0000000", verdict: "CLEAR" });
-    await run(project);
-    writeJson(verdictPath, { commit: "0000000", base: phaseStart, verdict: "CLEAR" });
-    await run(project);
-
-    expect(loadState(project).verified_phases).toEqual([]);
   });
 
   it.each<{ name: string; phases: number[] | null; fixed: string }>([
     { name: "all phases", phases: null, fixed: "all phases" },
     { name: "the selected phases", phases: [2], fixed: "phases [2]" },
   ])("the last verified phase ends the pipeline with a summary naming $name", async ({ phases, fixed }) => {
-    const { project, phaseStart, head, verdictPath } = awaitingSharingan({ phases_completed: [0], current_phase: null, status: "completed" });
-    writeJson(verdictPath, { commit: head, base: phaseStart, verdict: "CLEAR" });
+    const { project, head, marker } = awaitingVerification({ phases_completed: [0], current_phase: null, status: "completed" });
+    writeFileSync(marker, "");
     writeFileSync(join(project, "docs/audit/data/findings.jsonl"), '{"id": "F-1"}\n{"id": "F-2"}\n');
     ensureSentinel(project);
 
@@ -165,7 +154,7 @@ describe("runPipeline sharingan verification", () => {
         "  Rinnegan: 2 findings detected",
         `  Byakugan: deep analysis in ${project}/docs/audit/deep/`,
         `  Rasengan: ${fixed} fixed`,
-        "  Sharingan: 1 phases verified (CLEAR or INFRA_*)",
+        "  Verification: 1 phases verified (certified)",
         "  Sessions used: 1",
         `  Pipeline ID: ${stateOnDisk(project).pipeline_id}`,
         "",
@@ -176,36 +165,35 @@ describe("runPipeline sharingan verification", () => {
   });
 
   it("an interactive fix run stops for approval once the phase is verified", async () => {
-    const { project, phaseStart, head, verdictPath } = awaitingSharingan({ phases_completed: [0], current_phase: 1, status: "in_progress" });
-    writeJson(verdictPath, { commit: head, base: phaseStart, verdict: "INFRA_DEGRADED" });
+    const { project, marker } = awaitingVerification({ phases_completed: [0], current_phase: 1, status: "in_progress" });
+    writeFileSync(marker, "");
 
     const { output, code } = await run(project, { ...FIX_AUTO, approval: "interactive" });
 
     expect(code).toBe(0);
-    expect(output).toContain("\n[dojutsu] === PHASE 0 VERIFIED (INFRA_DEGRADED) ===\n[dojutsu] To continue to next phase, run this script again.\n");
+    expect(output).toContain("\n[dojutsu] === PHASE 0 VERIFIED (certified) ===\n[dojutsu] To continue to next phase, run this script again.\n");
     const state = loadState(project);
-    expect([state.stage, state.verified_phases]).toEqual(["SHARINGAN_PHASE_0", [0]]);
+    expect([state.stage, state.verified_phases]).toEqual(["VERIFY_PHASE_0", [0]]);
   });
 
-  it("tells the LLM to run sharingan over the phase range and which verdicts let it go on", async () => {
-    const { project, phaseStart } = awaitingSharingan({ phases_completed: [0], current_phase: 1, status: "in_progress" });
+  it("tells the LLM to certify the tree and what the result means", async () => {
+    const { project } = awaitingVerification({ phases_completed: [0], current_phase: 1, status: "in_progress" });
 
     const { output } = await run(project);
 
-    expect(output.slice(output.indexOf("STAGE: SHARINGAN_PHASE_0"))).toBe(
+    expect(output.slice(output.indexOf("STAGE: VERIFY_PHASE_0"))).toBe(
       [
-        "STAGE: SHARINGAN_PHASE_0",
+        "STAGE: VERIFY_PHASE_0",
         `SKILL_DIR: ${join(import.meta.dir, "..")}`,
         `PROJECT_DIR: ${project}`,
         "",
-        "Phase 0 is complete. Verify it with Sharingan over the phase range.",
+        "Phase 0 is complete. Verify it by certifying the tree.",
         "",
-        `ACTION: Run: ~/.coding-agent/sharingan/run.sh --base ${phaseStart}`,
+        `ACTION: Run: land --check ${project}`,
         `  Phase requirements: ${project}/docs/audit/data/tasks/phase-0-tasks.json`,
-        `  Verdict file: ${realpathSync(project)}/.sharingan/<HEAD sha>.verdict.json`,
         "",
-        "  CLEAR or INFRA_* → run this script again",
-        "  BLOCKED or PARTIAL → fix what the verdict names, commit, then run this script again",
+        "  PASS → run this script again",
+        "  FAIL → fix the task it names, commit, then run this script again",
         "",
       ].join("\n"),
     );
@@ -243,7 +231,7 @@ function auditedRepo(tasksByPhase: Record<number, Record<string, unknown>[]>): {
 const stateOnDisk = (project: string): DojutsuState => loadState(project);
 
 describe("runPipeline phase loop", () => {
-  it("a finished phase goes to sharingan before the next phase is handed out", async () => {
+  it("a finished phase goes to verification before the next phase is handed out", async () => {
     const { project, dataDir } = auditedRepo({ 0: [task("A-0")], 1: [task("B-1")] });
     await run(project); // opens phase 0, hands out A-0
     writeTasks(dataDir, 0, [task("A-0", "completed")]);
@@ -253,7 +241,7 @@ describe("runPipeline phase loop", () => {
     await run(project);
 
     expect(finishing.output).not.toContain("id=B-1");
-    expect(stateOnDisk(project).stage).toBe("SHARINGAN_PHASE_0");
+    expect(stateOnDisk(project).stage).toBe("VERIFY_PHASE_0");
   });
 
   it.each([
@@ -272,13 +260,13 @@ describe("runPipeline phase loop", () => {
   it.each<{ name: string; later: Record<number, Record<string, unknown>[]>; next: string }>([
     { name: "another phase follows", later: { 1: [task("B-1")] }, next: "RASENGAN_PHASE_1" },
     { name: "none does", later: {}, next: "PIPELINE_COMPLETE" },
-  ])("a phase opened with nothing left to fix moves on without sharingan: $name", async ({ later, next }) => {
+  ])("a phase opened with nothing left to fix moves on without verification: $name", async ({ later, next }) => {
     const { project } = auditedRepo({ 0: [task("A-0", "completed")], ...later });
     await run(project); // opens phase 0; rasengan finds it done
 
     const { output } = await run(project);
 
-    expect(output).not.toContain("sharingan/run.sh");
+    expect(output).not.toContain("land --check");
     expect(stateOnDisk(project).stage).toBe(next);
   });
 
