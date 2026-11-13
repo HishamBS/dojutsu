@@ -217,6 +217,7 @@ mvn checkstyle:check -pl "$MODULE" -q
 **R41** — Model Tiering
 **R42** — Artifact Deliverables Skip Software Process
 **R43** — Parallel by Default
+**R44** — Sessions Start in Assembly Mode
 
 ### Safety
 **R05** — Security
