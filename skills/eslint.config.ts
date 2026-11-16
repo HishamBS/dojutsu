@@ -1,5 +1,5 @@
 // ESLint for the quality-skills package: the JS recommended set, typescript-eslint's
-// type-checked set, and the rules this repo's gates lean on (R07: no non-null assertion; a
+// type-checked set, and the rules this repo's gates lean on (smallest-complete-change: no non-null assertion; a
 // swallowed error must say why). Fixtures hold deliberately bad projects and stay out of
 // every glob.
 import js from "@eslint/js";
